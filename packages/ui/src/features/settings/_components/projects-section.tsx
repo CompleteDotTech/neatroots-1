@@ -66,9 +66,10 @@ function ReplayDialog({ project, onClose }: { project: ProjectRow; onClose: () =
   );
 }
 
-export function ProjectsSection({ hooks, steerPython, steerTs }: { hooks: number; steerPython?: string | null; steerTs?: string | null }) {
+export function ProjectsSection({ streamClients, lastSeenMs, steerPython, steerTs }: { streamClients: number; lastSeenMs?: number | null; steerPython?: string | null; steerTs?: string | null }) {
   const { data, isLoading } = useProjects();
   const save = useSaveSettings();
+  const lastContact = lastSeenMs === undefined ? "unknown" : lastSeenMs === null ? "no contact observed" : ago(lastSeenMs);
   const [replayFor, setReplayFor] = useState<ProjectRow>();
   if (isLoading) return <SettingsLoading rows={1} />;
   const projects = data?.projects ?? [];
@@ -137,7 +138,10 @@ export function ProjectsSection({ hooks, steerPython, steerTs }: { hooks: number
           </div>
         )}
       </SettingsCard>
-      <SettingsCard title={`Steering hook · ${hooks} connected now`} description="Steering and replay overrides need a small hook in your agent. Wrap the LLM client you already use.">
+      <SettingsCard
+        title={`Steering hook · ${streamClients} SSE stream client${streamClients === 1 ? "" : "s"}`}
+        description={`Last successful hook contact since this server started: ${lastContact}. Steering and replay overrides need a small hook in your agent. Wrap the LLM client you already use.`}
+      >
         <SettingField label="Python">
           <CodeLine text={`pip install ${steerPython ?? "~/.neatroots/app/steer/python/neatroots-steer"}\n\nimport neatroots_steer\nclient = neatroots_steer.wrap(OpenAI())`} />
         </SettingField>

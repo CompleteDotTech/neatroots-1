@@ -29,6 +29,18 @@ program.name("neatroots").description("neatroots: local, private checks for AI a
 // Root options only before the command, so `neatroots update --version <tag>` reaches update.
 program.enablePositionalOptions();
 
+function steeringContactSinceStart(lastSeenMs: number | null | undefined): string {
+  if (lastSeenMs === null) return "no contact observed";
+  if (lastSeenMs === undefined) return "unknown";
+  const seconds = Math.max(0, Math.round((Date.now() - lastSeenMs) / 1000));
+  if (seconds < 60) return `${seconds}s ago`;
+  const minutes = Math.round(seconds / 60);
+  if (minutes < 60) return `${minutes}m ago`;
+  const hours = Math.round(minutes / 60);
+  if (hours < 24) return `${hours}h ago`;
+  return `${Math.round(hours / 24)}d ago`;
+}
+
 // ------------------------------------------------------------------- start
 
 program
@@ -216,7 +228,8 @@ program
       console.log(`  decisions ${s.engine.decision.backend ?? "unavailable"}${s.engine.decision.model ? ` (${s.engine.decision.model})` : ""}`);
       console.log(`  live runs ${s.engine.liveRuns} · pending checks ${s.engine.pendingJobs}`);
     }
-    console.log(`  steering ${s.steering.enabled ? "on" : "OFF (global switch)"} · hooks connected ${s.steering.hooks_connected}`);
+    const streamClients = s.steering.stream_clients ?? s.steering.hooks_connected ?? 0;
+    console.log(`  steering ${s.steering.enabled ? "on" : "OFF (global switch)"} · SSE stream clients ${streamClients} · last hook contact since server start ${steeringContactSinceStart(s.steering.last_seen_ms)}`);
     console.log(`  cloud ${s.cloud.has_key ? "key stored" : "no key"} → ${s.cloud.endpoint}`);
   });
 
@@ -265,6 +278,14 @@ program
       }
       const s = await api<any>(p, "/api/status");
       line(s.check_errors.length === 0 ? true : "warn", s.check_errors.length ? `${s.check_errors.length} check file problem(s)` : "all checks load");
+      const lastSeenMs: unknown = s.steering?.last_seen_ms;
+      if (lastSeenMs === null) {
+        line("warn", "no steering hook contact observed since this neatroots server started (check the hook setup if you use steering)");
+      } else if (typeof lastSeenMs === "number") {
+        console.log(`  last steering hook contact observed since this server started ${steeringContactSinceStart(lastSeenMs)}`);
+      } else {
+        line("warn", "steering hook contact time is unknown; this server version does not report it");
+      }
     }
     console.log(`\nTo test the SDK path end to end:  NEATLOGS_API_KEY=neatroots-local NEATLOGS_ENDPOINT=http://localhost:${p} python -m neatlogs doctor --probe`);
     process.exitCode = ok ? 0 : 1;
