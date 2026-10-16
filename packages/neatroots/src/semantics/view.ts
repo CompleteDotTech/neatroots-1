@@ -31,6 +31,11 @@ const KNOWN_KINDS = new Set<string>([
 
 export const COMPLETE_MARKER = "neatlogs.trace.complete";
 
+/** Roles that carry the system prompt: OpenAI's newer models take it as a "developer" message. */
+export function isSystemRole(role: unknown): boolean {
+  return role === "system" || role === "developer";
+}
+
 export interface SpanView {
   kind: SpanKind;
   isMarker: boolean;

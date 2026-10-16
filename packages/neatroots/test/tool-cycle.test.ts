@@ -30,7 +30,7 @@ function fires(calls: Call[]): boolean {
   });
   st.ingest([batch(spans)]);
   const hit = evaluateRule(rule, loadTrace(st, t)!, false);
-  return !!hit;
+  return !!hit?.firing;
 }
 
 const TOOLS = ["search", "fetch", "read_file", "edit_file", "run_tests", "list_dir"];

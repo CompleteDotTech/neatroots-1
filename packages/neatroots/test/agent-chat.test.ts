@@ -76,3 +76,50 @@ echo '{"type":"result","subtype":"success","is_error":true,"result":"${err}","se
     expect(events.find((e) => e.kind === "result")?.text).toBeUndefined();
   });
 });
+
+describe("a chat with Codex whose message starts with a dash", () => {
+  it("passes the prompt after -- so codex never reads it as a flag, for new and resumed sessions", async () => {
+    dir = fs.mkdtempSync(path.join(os.tmpdir(), "neatroots-chat-"));
+    process.env.HOME = dir;
+    const log = path.join(dir, "args.log");
+    process.env.NEATROOTS_CODEX_BIN = script(
+      "codex",
+      // Codex's parser (clap) reads a bare prompt that starts with - as an option and exits 2;
+      // anything after -- is positional. One arg per line so a multi-line prompt can't fake a match.
+      `printf '%s\\n' "$@" >> "${log}"
+printf '%s\\n' ---- >> "${log}"
+dd=0
+prev=""
+for a in "$@"; do
+  if [ "$prev" = "-c" ] || [ "$prev" = "--sandbox" ]; then prev=""; continue; fi
+  case "$a" in
+    --) dd=1 ;;
+    --json|--skip-git-repo-check|-c|--sandbox) ;;
+    -*) [ "$dd" = 0 ] && { echo "error: unexpected argument '$a' found" >&2; exit 2; } ;;
+  esac
+  prev="$a"
+done
+echo '{"type":"thread.started","thread_id":"thread_t"}'
+echo '{"type":"item.completed","item":{"id":"i1","type":"agent_message","text":"OK"}}'
+echo '{"type":"turn.completed","usage":{"input_tokens":1,"output_tokens":1}}'`,
+    );
+    t = await makeRoots({ noEngine: true });
+    const s = t.roots.chats.create({ agent: "codex", cwd: dir });
+    await t.roots.chats.send(s.id, "hi");
+    await t.roots.chats.send(s.id, "- list the files");
+    const events = t.roots.chats.events(s.id);
+    expect(events.filter((e) => e.kind === "error")).toEqual([]);
+    expect(events.filter((e) => e.kind === "text").map((e) => e.text)).toEqual(["OK", "OK"]);
+    // Both calls must put -- right before the prompt: the first call's prompt is the preamble
+    // plus "hi", the follow-up's is "- list the files".
+    const calls = fs.readFileSync(log, "utf8").split("----\n").filter((c) => c.trim());
+    expect(calls).toHaveLength(2);
+    calls.forEach((call, i) => {
+      // The prompt is one arg but can span lines; everything after the -- line is the prompt.
+      const lines = call.trimEnd().split("\n");
+      expect(lines.filter((a) => a === "--")).toHaveLength(1);
+      const prompt = lines.slice(lines.indexOf("--") + 1).join("\n");
+      expect(prompt.endsWith(i === 0 ? "hi" : "- list the files")).toBe(true);
+    });
+  });
+});

@@ -2,7 +2,7 @@ import os from "node:os";
 import Anthropic from "@anthropic-ai/sdk";
 import type { RootsConfig } from "../config.js";
 import { log } from "../util/log.js";
-import { BUILTIN_RULES, compileRules, redactString, type RedactionRule } from "../relay/redact.js";
+import { BUILTIN_RULES, compileRules, CREDENTIAL_KINDS, redactString, type RedactionRule } from "../relay/redact.js";
 import { isLocalUrl, llmKeyName, providerById, strictSchema, type ProviderPreset } from "./providers.js";
 
 export interface ChatMessage {
@@ -624,7 +624,7 @@ export class LlmClient {
     const mode = this.cfg.external.redact;
     if (mode === "off") return (s) => s;
     const rules: RedactionRule[] =
-      mode === "all" ? compileRules(this.opts.redactPatterns?.() ?? []) : BUILTIN_RULES.filter((r) => ["private_key", "api_key", "bearer_token"].includes(r.kind));
+      mode === "all" ? compileRules(this.opts.redactPatterns?.() ?? []) : BUILTIN_RULES.filter((r) => CREDENTIAL_KINDS.includes(r.kind));
     return (s) => redactString(s, rules, "llm", []);
   }
 

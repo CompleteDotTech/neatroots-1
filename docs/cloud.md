@@ -32,8 +32,11 @@ The relay is tested end to end by forwarding into a second neatroots instance an
   `neatroots cloud auto <project> on`.
 - From a coding agent: `push_to_cloud` asks; you confirm in the app before anything is sent.
 
-Before each send neatroots shows a redaction preview. Emails, phone numbers, API keys, bearer tokens and
-private keys are always redacted; add your own patterns in Settings. Redaction also inspects OTLP byte
+Before each send neatroots shows a redaction preview. Emails, phone numbers, private keys and credentials
+are always redacted: API keys (OpenAI, Anthropic, AWS access key ids, GitHub classic and fine-grained
+tokens, Slack, Google, Stripe, Hugging Face, Groq, npm, Google OAuth), bearer tokens, JWTs, `Basic`
+authorization, AWS secret access keys and passwords in URLs (`scheme://user:password@host`). Add your own
+patterns in Settings. Redaction also inspects OTLP byte
 attributes when they contain valid UTF-8 text, while arbitrary binary values remain unchanged. The
 SDK's own `mask` and PII options still apply first, in your process. Every send is logged (Settings →
 Neatlogs Cloud).

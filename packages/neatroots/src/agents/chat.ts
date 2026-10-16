@@ -314,7 +314,8 @@ export class AgentChats {
     else args.push("--json", "--skip-git-repo-check", "--sandbox", mode);
     const client = findClient("codex");
     if (!client || !clientStatus(client).connected) args.push("-c", `mcp_servers.neatroots.url="${this.mcpUrl()}"`);
-    args.push(prompt);
+    // A message can start with "-" (a pasted list, a diff line); without `--` codex reads it as a flag.
+    args.push("--", prompt);
     return { cmd: "codex", args };
   }
 

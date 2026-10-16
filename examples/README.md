@@ -10,8 +10,9 @@ neatroots mock-llm            # terminal 2
 cd examples/python-openai && uv run agent.py "Please refund order 1001"
 ```
 
-Then open http://localhost:4100. To run them all and check each produced a run:
-`sh examples/run-all.sh`. With the installer, they are in `~/.neatroots/app/examples`.
+Then open http://localhost:4100. `sh examples/run-all.sh` runs the automated agent examples
+and the HTTP API example, and checks that each produced a run. Run `browser`, `import-files`,
+`refund-agent`, and `samples` separately/by hand. With the installer, they are in `~/.neatroots/app/examples`.
 
 | Example | Language | How it sends runs | Shows |
 | --- | --- | --- | --- |

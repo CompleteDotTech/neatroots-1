@@ -252,11 +252,11 @@ export interface OtlpLogRecord {
 
 function normLogs(obj: any): OtlpLogRecord[] {
   const out: OtlpLogRecord[] = [];
-  for (const rl of g(obj, "resourceLogs", "resource_logs") ?? []) {
+  for (const rl of objects(g(obj, "resourceLogs", "resource_logs"), "resourceLogs")) {
     const resource = normResource(rl.resource);
-    for (const sl of g(rl, "scopeLogs", "scope_logs") ?? []) {
+    for (const sl of objects(g(rl, "scopeLogs", "scope_logs"), "scopeLogs")) {
       const scope = normScope(sl.scope);
-      for (const lr of g(sl, "logRecords", "log_records") ?? []) {
+      for (const lr of objects(g(sl, "logRecords", "log_records"), "logRecords")) {
         out.push({
           timeUnixNano: longToString(g(lr, "timeUnixNano", "time_unix_nano") ?? g(lr, "observedTimeUnixNano", "observed_time_unix_nano")),
           severityText: g(lr, "severityText", "severity_text") || undefined,

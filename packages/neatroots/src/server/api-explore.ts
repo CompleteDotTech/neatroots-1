@@ -1,3 +1,4 @@
+import fs from "node:fs";
 import type { Hono } from "hono";
 import type { Roots } from "../core.js";
 import { loadTrace } from "../engine/trace.js";
@@ -98,7 +99,10 @@ export function mountExploreApi(app: Hono, roots: Roots): void {
       if (filters.check && !roots.store.listFindings({ traceId: r.trace_id, checkId: filters.check }).length) return false;
       if (!text && (kind || filters.tool || filters.model)) {
         const spans = roots.store.getSpans(r.trace_id);
-        return spans.some((s) => (!kind || s.span_kind === kind) && (!filters.tool || (s.tool_name ?? "").includes(filters.tool)) && (!filters.model || (s.model ?? "").includes(filters.model)));
+        // Any case, as when the search has text too (tool:lookuporder finds LookupOrder).
+        const tool = filters.tool?.toLowerCase();
+        const model = filters.model?.toLowerCase();
+        return spans.some((s) => (!kind || s.span_kind === kind) && (!tool || (s.tool_name ?? "").toLowerCase().includes(tool)) && (!model || (s.model ?? "").toLowerCase().includes(model)));
       }
       return true;
     });
@@ -218,8 +222,10 @@ export function mountExploreApi(app: Hono, roots: Roots): void {
     const command = b.command?.trim() || undefined;
     const url = b.url?.trim() || undefined;
     if (url && !/^http:\/\/(localhost|127\.0\.0\.1|\[::1\])(:\d+)?\//.test(url)) return err(c, 400, "the replay endpoint must be on this machine (http://localhost:…/)");
+    const cwd = b.cwd?.trim() || undefined;
+    if (command && cwd && !(fs.existsSync(cwd) && fs.statSync(cwd).isDirectory())) return err(c, 400, `no such folder: ${cwd}`);
     if (!command && !url) delete roots.config.rerun[project];
-    else roots.config.rerun[project] = { command, cwd: b.cwd?.trim() || undefined, url };
+    else roots.config.rerun[project] = { command, cwd, url };
     roots.saveConfig();
     return c.json({ project, rerun: roots.config.rerun[project] ?? null });
   });

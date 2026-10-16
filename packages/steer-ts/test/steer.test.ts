@@ -3,7 +3,7 @@ import type { AddressInfo } from "node:net";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { generateText, wrapLanguageModel } from "ai";
 import { MockLanguageModelV4 } from "ai/test";
-import { applyAnthropic, applyMessages, NeatrootsHalt, rootsMiddleware, checkMyWork, configure, handleToolCall, replayInput, wrapOpenAI, type Note } from "../src/index.js";
+import { applyAnthropic, applyMessages, NeatrootsHalt, rootsMiddleware, checkMyWork, configure, handleToolCall, replayInput, wrapAnthropic, wrapOpenAI, type Note } from "../src/index.js";
 
 const notes: (Note | null)[] = [];
 const claims: any[] = [];
@@ -64,6 +64,14 @@ describe("neatroots-steer (ts)", () => {
     const client = wrapOpenAI({ chat: { completions: { create: async (p: any) => ((seen = p), "ok") } } });
     expect(await client.chat.completions.create({ model: "m", messages: [{ role: "user", content: "q" }] })).toBe("ok");
     expect(seen.messages[0].content).toContain("<neatroots-guidance>");
+  });
+
+  it("wraps the client a withOptions copy returns", async () => {
+    notes.push(note("Your rule says stop.", "halt"), note("Your rule says stop.", "halt"));
+    const makeOpenAI = (): any => ({ chat: { completions: { create: async (_p: unknown) => "should not run" } }, withOptions: () => makeOpenAI() });
+    await expect(wrapOpenAI(makeOpenAI()).withOptions().chat.completions.create({ messages: [{ role: "user", content: "q" }] })).rejects.toBeInstanceOf(NeatrootsHalt);
+    const makeAnthropic = (): any => ({ messages: { create: async (_p: unknown) => "should not run" }, withOptions: () => makeAnthropic() });
+    await expect(wrapAnthropic(makeAnthropic()).withOptions().messages.create({ messages: [] })).rejects.toBeInstanceOf(NeatrootsHalt);
   });
 
   it("applies a replay's input, model and system prompt", async () => {
