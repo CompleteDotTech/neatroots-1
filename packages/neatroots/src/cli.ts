@@ -155,6 +155,13 @@ program
       set("NEATLOGS_API_KEY", "neatroots-local", true);
       fs.writeFileSync(envPath, text);
       console.log(`✓ .env points the Neatlogs SDK at neatroots`);
+      // The SDKs read the environment, not .env, so without one of these the agent sends nothing (#49).
+      console.log(
+        `→ the SDK doesn't read .env on its own; load it when you start the agent:\n` +
+          `    set -a; . ./.env; set +a          # then run it as usual\n` +
+          `    dotenv run -- python agent.py     # or python-dotenv's load_dotenv() before neatlogs.init\n` +
+          `    node --env-file=.env agent.js`,
+      );
     } else {
       console.log(`→ point the Neatlogs SDK at neatroots (or rerun with --write-env):\n    ${envLines.join("\n    ")}`);
     }
@@ -393,10 +400,10 @@ program
         for (const e of r.errors) console.log(`! ${e}`);
         for (const x of r.runs) {
           const label = `${x.file} ${x.trace_id.slice(0, 8)}${x.root_name ? ` ${x.root_name}` : ""}`;
-          const incomplete = x.rule_evaluations?.some((e) => e.actions === 0 || Object.keys(e.skipped).length > 0);
+          const incomplete = x.rule_evaluations?.some((e) => Object.keys(e.skipped).length > 0);
           if (!x.findings.length) console.log(`${incomplete ? "?" : "✓"} ${label}${incomplete ? " (temporal contract coverage incomplete)" : ""}`);
           for (const f of x.findings) console.log(`✗ ${label}: ${f.check_id}: ${f.title}`);
-          for (const e of x.rule_evaluations ?? []) console.log(`  ${e.check_id}: ${e.evaluated}/${e.actions} actions evaluated, ${e.matched} matched; skipped ${JSON.stringify(e.skipped)}`);
+          for (const e of x.rule_evaluations?.filter((e) => Object.keys(e.skipped).length > 0) ?? []) console.log(`  ${e.check_id}: ${e.evaluated}/${e.actions} actions evaluated, ${e.matched} matched; skipped ${JSON.stringify(e.skipped)}`);
         }
         console.log(`\n${r.runs.length} run${r.runs.length === 1 ? "" : "s"}, ${failed.length} with findings, ${r.rules.length} rules`);
       }
