@@ -75,7 +75,6 @@ interface LiveRun {
   dirty: Set<string>;
   debounce?: NodeJS.Timeout;
   endTimer?: NodeJS.Timeout;
-  contractEpoch?: number;
   ended: boolean;
   endHandled: boolean;
   doctor: boolean;
@@ -227,33 +226,19 @@ export class Engine {
   }
 
   private onTrace(u: TraceUpdate): void {
-    const recovered = !this.live.has(u.traceId);
     const run = this.liveRun(u.traceId);
     if (!run) return;
     if (run.doctor) {
       this.live.delete(u.traceId);
       return;
     }
-    const contracts = this.registry.rules().some((lc) => isRule(lc.check) && lc.check.rule.type === "result_action");
-    const stored = recovered && contracts && !u.runCreated && !u.rootEnded && !u.completed ? this.roots.store.getRun(u.traceId) : undefined;
-    if (stored && (stored.complete || stored.root_ended)) {
-      run.ended = true;
-      run.endHandled = true;
-    }
     const fresh = u.spans.filter((s) => s.isNew && !s.view.isMarker);
     if (fresh.length) this.track(u.traceId, this.handleSpans(run, fresh.map((s) => s.row.span_id)));
-    if (run.endHandled && u.spans.length && contracts) {
-      const epoch = run.contractEpoch = (run.contractEpoch ?? 0) + 1;
-      void this.track(u.traceId, new Promise<void>((resolve) => setTimeout(resolve, 400)).then(() => {
-        if (this.live.get(u.traceId) !== run || run.contractEpoch !== epoch || !this.roots.store.db.open) return;
-        this.applyRules(run, loadTrace(this.roots.store, u.traceId), true, undefined, true);
-      }));
-    }
     if (u.rootEnded || u.completed) {
       run.ended = true;
       // Trailing spans can arrive in the next batch; give them a moment.
       clearTimeout(run.endTimer);
-      if (!run.endHandled) run.endTimer = setTimeout(() => void this.track(u.traceId, this.handleEnd(run)), 400);
+      run.endTimer = setTimeout(() => void this.track(u.traceId, this.handleEnd(run)), 400);
     }
   }
 
@@ -367,10 +352,9 @@ export class Engine {
 
   // ----------------------------------------------------------------- rules
 
-  private applyRules(run: LiveRun, snap: TraceSnapshot, atEnd: boolean, fresh?: ReadonlySet<string>, contractsOnly = false): void {
+  private applyRules(run: LiveRun, snap: TraceSnapshot, atEnd: boolean, fresh?: ReadonlySet<string>): void {
     for (const lc of this.registry.rules()) {
       const rule = lc.check as RuleCheck;
-      if (contractsOnly && rule.rule.type !== "result_action") continue;
       if (!this.appliesTo(rule, run)) continue;
       if (rule.rule.type === "run_end" && !atEnd) continue;
       let hit: RuleHit | null;
@@ -380,34 +364,21 @@ export class Engine {
         log.warn(`rule ${rule.id} failed: ${(err as Error).message}`);
         continue;
       }
-      const contract = rule.rule.type === "result_action";
-      let open = this.roots.store.openFindingFor(run.traceId, rule.id);
-      if (contract && open && hit && (open.detail.params as Record<string, string> | undefined)?.rule_version !== hit.params.rule_version) {
-        this.resolve(open);
-        open = undefined;
-      }
+      const open = this.roots.store.openFindingFor(run.traceId, rule.id);
       if (hit?.firing) {
         if (open) {
-          const changed = JSON.stringify(open.evidence_span_ids) !== JSON.stringify(hit.evidenceSpanIds) || (contract && JSON.stringify(open.detail.params) !== JSON.stringify(hit.params));
+          const changed = JSON.stringify(open.evidence_span_ids) !== JSON.stringify(hit.evidenceSpanIds);
           if (changed) {
             const f = this.roots.store.updateFinding(open.id, { evidence_span_ids: hit.evidenceSpanIds, detail: { ...open.detail, params: hit.params } });
             if (f) this.roots.bus.emit("finding", f);
           }
         } else {
-          const previous = contract ? this.roots.store.findingsForTrace(run.traceId).find((f) => f.check_id === rule.id && (f.detail.params as Record<string, string> | undefined)?.rule_version === hit.params.rule_version && JSON.stringify(f.evidence_span_ids) === JSON.stringify(hit.evidenceSpanIds)) : undefined;
-          if (previous) {
-            if (previous.status === "resolved") {
-              const reopened = this.roots.store.updateFinding(previous.id, { status: newFindingStatus(this.roots.store, rule.id, run.project), detail: { ...previous.detail, params: hit.params } });
-              if (reopened) this.roots.bus.emit("finding", reopened);
-            }
-            continue;
-          }
           const status = newFindingStatus(this.roots.store, rule.id, run.project);
           const f = this.roots.store.insertFinding({
             trace_id: run.traceId,
             check_id: rule.id,
             check_kind: "rule",
-            title: rule.title ?? hit.title ?? checkTitle(rule),
+            title: checkTitle(rule),
             probability: null,
             status,
             evidence_span_ids: hit.evidenceSpanIds,
@@ -420,7 +391,6 @@ export class Engine {
           if (status === "raised") this.onFindingRaised(run, f, lc, hit.params, snap);
         }
       } else if (open && hit && !hit.firing) {
-        if (contract) this.roots.store.updateFinding(open.id, { detail: { ...open.detail, params: hit.params } });
         this.resolve(open);
       }
     }
@@ -1107,7 +1077,7 @@ ${library}`;
       checked++;
       if (isRule(check)) {
         const hit = evaluateRule(check, snap, true);
-        if (hit && (check.rule.type !== "result_action" || hit.firing)) hits.push({ trace_id: r.trace_id, probability: null, evidence_span_ids: hit.evidenceSpanIds, root_name: r.root_name });
+        if (hit) hits.push({ trace_id: r.trace_id, probability: null, evidence_span_ids: hit.evidenceSpanIds, root_name: r.root_name });
         continue;
       }
       const targets = check.scope === "span" ? selectSpans(snap.spans, check.evidence?.spans).slice(-5) : [undefined];
