@@ -1,4 +1,3 @@
-import { createHash } from "node:crypto";
 import type { RuleSpec } from "./types.js";
 import type { RuleHit } from "./rules.js";
 import { selectSpans, type SpanInfo, type TraceSnapshot } from "../engine/trace.js";
@@ -12,7 +11,6 @@ export interface ContractCoverage {
   skipped: Record<string, number>;
 }
 const MAX_COMPARISONS = 100_000;
-const NOTICE = "This recorded result/action pair matches the configured temporal rule. It does not establish that the action depended on the result.";
 
 function valueAt(output: unknown, path: (string | number)[]): { value: unknown } | undefined {
   let value = output;
@@ -36,7 +34,7 @@ function correlation(s: SpanInfo, field: { field: "input" | "output"; path: (str
 }
 
 /** All indexes are local to this snapshot. Parent ids never join different traces. */
-export function resultActionHit(rule: Contract, trace: TraceSnapshot): RuleHit {
+export function evaluateResultAction(rule: Contract, trace: TraceSnapshot): { hit: RuleHit | null; coverage: ContractCoverage } {
   const results = selectSpans(trace.spans, rule.result);
   const actions = selectSpans(trace.spans, rule.forbids).sort((a, b) => a.startMs - b.startMs || a.id.localeCompare(b.id));
   const coverage: ContractCoverage = { actions: actions.length, evaluated: 0, matched: 0, skipped: {} };
@@ -84,20 +82,24 @@ export function resultActionHit(rule: Contract, trace: TraceSnapshot): RuleHit {
     coverage.matched++;
   }
   return {
-    firing: !!last,
-    evidenceSpanIds: last ? [last.result.id, last.action.id] : [],
-    title: "Recorded result/action contract matched",
-    params: {
-      notice: NOTICE,
-      rule_version: createHash("sha256").update(JSON.stringify(rule)).digest("hex"),
-      ...(last ? { result_tool: last.result.toolName ?? last.result.name, action_tool: last.action.toolName ?? last.action.name, delta_ms: String(last.delta) } : {}),
-      path: JSON.stringify(rule.path),
-      value: JSON.stringify(rule.equals),
-      within_ms: String(rule.within_ms),
-      count: String(coverage.matched),
-      evaluated: String(coverage.evaluated),
-      actions: String(coverage.actions),
-      skipped: JSON.stringify(coverage.skipped),
-    },
+    coverage,
+    hit: last ? {
+      firing: true,
+      evidenceSpanIds: [last.result.id, last.action.id],
+      title: "Recorded result/action contract matched",
+      params: {
+        result_tool: last.result.toolName ?? last.result.name,
+        action_tool: last.action.toolName ?? last.action.name,
+        delta_ms: String(last.delta),
+        path: JSON.stringify(rule.path),
+        value: JSON.stringify(rule.equals),
+        within_ms: String(rule.within_ms),
+        count: String(coverage.matched),
+      },
+    } : null,
   };
+}
+
+export function resultActionHit(rule: Contract, trace: TraceSnapshot): RuleHit | null {
+  return evaluateResultAction(rule, trace).hit;
 }
