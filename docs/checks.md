@@ -40,12 +40,13 @@ action: flag              # or halt (your own rules only)
 
 ### Recorded result/action contracts
 
-`result_action` is opt-in. It matches a configured temporal pattern in recorded spans, not
-semantic consistency or a causal dependency. There is no shipped default for it.
+`result_action` is opt-in and end/offline only. It matches recorded order, not causality or
+whether an action depended on a result. No default check ships with it, and it cannot halt a run.
 
 ```yaml
 id: write-after-blocked-result
 kind: rule
+description: Recorded order only; this does not prove the action depended on the result.
 rule:
   type: result_action
   result: { tool: permission }
@@ -53,56 +54,18 @@ rule:
   equals: false
   forbids: { tool: write }
   within_ms: 5000
-  scope: same_parent
-  clock: same
-  correlate:
-    result: { field: input, path: [entity_id] }
-    action: { field: input, path: [entity_id] }
 ```
 
-The action must start strictly after the result ends, and no more than `within_ms` later.
-Times are recorded milliseconds. `within_ms` is required, positive, finite and at most one
-hour. `clock: same` is an explicit assumption by the rule author, not something neatroots can
-verify from arbitrary imported telemetry. Do not use this rule across incomparable clocks.
-Equal boundary timestamps, overlaps, invalid times and unfinished results are skipped.
-
-Both spans must be direct siblings with the same known parent in the same trace. Parent
-scope does not prove a dependency. Use `correlate` when that parent contains different entities
-or parallel work. Correlation reads an exact scalar from each configured input/output path;
-missing keys and incompatible keys are skipped, not coerced. Without correlation, the contract
-applies to the whole recorded parent scope. Selectors use the existing span-selector semantics.
-
-The latest eligible completed result wins, before checking its value. A newer clearing result
-supersedes an older blocked result. A newer eligible result with missing data, a tie, or a result
-still in flight makes the affected action uncertain; the checker does not fall back to stale data.
-Results for a different explicit correlation key do not supersede each other.
-
-Paths are typed: strings select own object properties and integers select array indexes, for
-example `[rows, 0, allowed]`. Paths have at most 16 segments. Prototype keys are rejected. A
-missing property is not `null`, `false`, `0` or an empty string. Values and correlation keys are
-scalars; types must match, with no coercion, substring match or implicit JSON-string parsing.
-This first version does not inspect text nested inside an MCP result automatically. It does
-not infer missing actions, intent, causality or natural-language meaning, and cannot halt a run.
-
-The end pass uses a stored snapshot after the usual trailing-span grace period. That is not a
-promise of complete telemetry. Late or updated spans on an ended run trigger another
-contract-only pass after a quiet period; an old finding resolves if the pattern no longer holds
-or cannot be evaluated safely. Explicit Re-run checks also uses the latest stored snapshot.
-Repeated snapshots reuse the same finding for the same rule version and evidence pair;
-dismissed findings are not reopened automatically. Changes to the rule create a new version.
-
-`neatroots check ... --json` includes per-rule `rule_evaluations`: action candidates, evaluated
-actions, matches, and skipped counts by reason. Text output shows the same counts and uses
-`?` rather than a clean check mark when temporal coverage is incomplete. These counts describe
-recorded candidates, not production precision or recall. Findings include the evidence span
-ids, configured typed value/path, timing, version and coverage, never whole tool outputs.
-The run UI shows this notice and coverage on a temporal finding. Clean/skipped evaluations
-without a finding are reported by the offline CLI, not persisted as run findings.
-
-Work is capped at 100,000 result/action candidate comparisons per rule and snapshot. Larger
-fan-out is skipped with `comparison_budget` before any pair is reported. This first version
-uses parent grouping and bounded scans, not a general temporal-logic engine or an unmeasured
-claim of O(N log N) performance. A skipped result is not evidence that an action was safe.
+The latest preceding result under the same known parent wins. Its scalar value must match
+exactly, with no coercion; the action must start strictly after it ends, within `within_ms`
+(maximum one hour). String path segments select own object properties; integers select array
+indexes. Optional `correlate: {result: {field: input, path: [id]}, action: {field: input, path: [id]}}`
+restricts pairs to the same scalar key. `scope: same_parent` and `clock: same` are defaults;
+the author must ensure timestamps are comparable. Missing data, ties, overlaps, incomplete spans,
+duplicate ids and more than 100,000 candidate comparisons are skipped. Offline `rule_evaluations`
+reports action/evaluated/matched/skipped counts separately from findings. End-of-run evaluation
+uses the usual snapshot; use Re-run checks after late telemetry arrives. A skipped pair is not
+proof that an action was safe.
 
 ## Questions
 
