@@ -298,6 +298,10 @@ neatroots is built from public inputs: the public Neatlogs SDKs and their teleme
 OpenTelemetry, MCP, publicly documented APIs, and openly licensed models. Issues and pull requests
 are welcome; [AGENTS.md](AGENTS.md) has the conventions.
 
+neatroots is maintained by [@akshay-neatlogs](https://github.com/akshay-neatlogs), with
+[@harshk-neatlogs](https://github.com/harshk-neatlogs) and [@taranum-neatlogs](https://github.com/taranum-neatlogs)
+on the core team. [MAINTAINERS.md](MAINTAINERS.md) says how contributions are handled.
+
 ## License
 
 Apache-2.0. See [LICENSE](LICENSE).

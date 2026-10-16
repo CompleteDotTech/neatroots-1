@@ -200,7 +200,9 @@ export function evaluateRule(check: RuleCheck, t: TraceSnapshot, atEnd: boolean,
       // Instrumented spans that succeed usually report status unset, so only errors are ruled out.
       const needed = selectSpans(t.spans, { ...r.requires, status: "any" }).filter((s) => s.status !== "error");
       const missed = guarded.filter((g) => !needed.some((n) => n.id !== g.id && n.startMs <= g.startMs));
-      if (!missed.length) return null;
+      // Spans can arrive out of order: once a late prerequisite covers every call, say so,
+      // so a finding raised before it arrived resolves.
+      if (!missed.length) return { firing: false, evidenceSpanIds: guarded.map((s) => s.id), params: {} };
       const first = missed[0];
       return {
         firing: true,

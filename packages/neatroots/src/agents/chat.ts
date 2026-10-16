@@ -129,6 +129,28 @@ function signalGroup(p: ChildProcess, signal: NodeJS.Signals): void {
   }
 }
 
+/** Whether anything in the agent's process group is still running. */
+function groupAlive(p: ChildProcess): boolean {
+  if (!p.pid) return false;
+  try {
+    process.kill(-p.pid, 0);
+    return true;
+  } catch {
+    return p.exitCode === null && p.signalCode === null;
+  }
+}
+
+/**
+ * Asks the agent's group to stop, then kills whatever is left 3 s later. The deadline doesn't depend
+ * on the turn still running: a tool that ignores SIGTERM can outlive the CLI that started it.
+ */
+function endGroup(p: ChildProcess): void {
+  signalGroup(p, "SIGTERM");
+  setTimeout(() => {
+    if (groupAlive(p)) signalGroup(p, "SIGKILL");
+  }, 3000).unref();
+}
+
 export class AgentChats {
   private readonly running = new Map<string, ChildProcess>();
   private readonly stopping = new Set<string>();
@@ -219,10 +241,7 @@ export class AgentChats {
     const p = this.running.get(id);
     if (!p) return false;
     this.stopping.add(id);
-    signalGroup(p, "SIGTERM");
-    setTimeout(() => {
-      if (this.running.get(id) === p) signalGroup(p, "SIGKILL");
-    }, 3000).unref();
+    endGroup(p);
     return true;
   }
 
@@ -287,7 +306,7 @@ export class AgentChats {
         done = true;
         this.running.delete(id);
         // The turn is over: anything the CLI started and left running goes with it.
-        signalGroup(child, "SIGTERM");
+        endGroup(child);
         const stopped = this.stopping.delete(id) || !!signal;
         if (stopped) this.emit(id, { kind: "status", text: "Stopped" });
         else if (code !== 0 && !sawResult) this.emit(id, { kind: "error", text: this.explainFailure(s.agent, stderr) });

@@ -158,7 +158,7 @@ const client = neatlogs.wrapOpenAI(new OpenAI()); // use this client for your ca
 - `flush_interval=0.5` (`flushInterval` in TypeScript) sends spans every half second, so neatroots can check a run while it is still going.
 - In production, unset `NEATLOGS_ENDPOINT` and the same code sends to Neatlogs Cloud.
 
-In your agent's repository, `neatroots init --project refund-agent --write-env` writes the two variables to `.env` and adds a `.neatroots/checks/` folder for checks your team shares. To check the path end to end with the SDK's own doctor: `python -m neatlogs doctor --probe`.
+In your agent's repository, `neatroots init --project refund-agent --write-env` writes the two variables to `.env` and adds a `.neatroots/checks/` folder for checks your team shares. The SDKs read the environment, not `.env`, so load it when you start the agent: `set -a; . ./.env; set +a` in the shell, `dotenv run -- python agent.py` (or `load_dotenv()` before `neatlogs.init`), or `node --env-file=.env agent.js`. Without that the agent runs normally and neatroots records nothing. To check the path end to end with the SDK's own doctor: `python -m neatlogs doctor --probe`.
 
 ### Other ways in
 

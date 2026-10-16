@@ -59,6 +59,8 @@ export function checkFiles(files: string[], opts: OfflineOptions = {}): { runs: 
           if (hit) findings.push({ check_id: rule.id, title: rule.title ?? rule.id, evidence_span_ids: hit.evidenceSpanIds, params: hit.params });
         }
         runs.push({ file, trace_id: traceId, root_name: run?.root_name ?? null, findings });
+        // Each file gets its own verdict: a later file with the same trace id must not see these spans.
+        store.deleteRun(traceId);
       }
     }
     return { runs, rules: rules.map((r) => r.id), errors };

@@ -111,6 +111,38 @@ wait`,
   }, 20_000);
 });
 
+describe("stopping a chat turn whose tool ignores SIGTERM", () => {
+  it("still kills the tool after the escalation deadline, though the turn has already ended", async () => {
+    dir = fs.mkdtempSync(path.join(os.tmpdir(), "neatroots-chat-"));
+    process.env.HOME = dir;
+    const childPid = path.join(dir, "child.pid");
+    // The CLI exits on SIGTERM; the tool it started ignores SIGTERM and keeps stdout open.
+    process.env.NEATROOTS_CODEX_BIN = script(
+      "codex",
+      `echo '{"type":"thread.started","thread_id":"thread_k"}'
+"${process.execPath}" -e 'process.on("SIGTERM", () => {}); require("fs").writeFileSync(process.argv[1], String(process.pid)); setInterval(() => {}, 1000)' "${childPid}" &
+wait`,
+    );
+    t = await makeRoots({ noEngine: true });
+    const s = t.roots.chats.create({ agent: "codex", cwd: dir });
+    const turn = t.roots.chats.send(s.id, "run a stubborn tool");
+    await poll(async () => fs.existsSync(childPid) && fs.readFileSync(childPid, "utf8").trim());
+    const pid = Number(fs.readFileSync(childPid, "utf8").trim());
+    expect(t.roots.chats.stop(s.id)).toBe(true);
+    await turn;
+    expect(t.roots.chats.get(s.id)!.state).toBe("idle");
+    const alive = () => {
+      try {
+        process.kill(pid, 0);
+        return true;
+      } catch {
+        return false;
+      }
+    };
+    await poll(async () => !alive(), 8000);
+  }, 20_000);
+});
+
 describe("a chat with Codex whose message starts with a dash", () => {
   it("passes the prompt after -- so codex never reads it as a flag, for new and resumed sessions", async () => {
     dir = fs.mkdtempSync(path.join(os.tmpdir(), "neatroots-chat-"));
