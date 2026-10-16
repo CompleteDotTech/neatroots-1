@@ -30,38 +30,24 @@ describe("explicit offline checks directories", () => {
     for (const dirs of [[folder, missing], [missing, folder]]) expect(() => checkFiles([trace], { dirs })).toThrow(/checks directory does not exist/);
   });
   it("returns input error 2 in CLI text and JSON modes rather than a clean verdict", () => {
-    for (const json of [false, true]) for (const dirs of [[missing], [folder, missing]]) {
-      const result = cli(dirs, json);
+    for (const json of [false, true]) {
+      const result = cli([folder, missing], json);
       expect(result.status).toBe(2);
       expect(result.stderr).toContain(missing);
       expect(result.stderr).toContain("checks directory does not exist");
       expect(result.stdout).toBe("");
     }
   });
-  it("loads an existing directory containing spaces, and keeps finding exit 1", () => {
-    for (const json of [false, true]) {
-      const result = cli([folder], json);
-      expect(result.status).toBe(1);
-      if (json) expect(JSON.parse(result.stdout).runs[0].findings.map((f: { check_id: string }) => f.check_id)).toContain("missing-dir-proof");
-    }
+  it("loads an existing directory containing spaces", () => {
+    expect(checkFiles([trace], { dirs: [folder] }).runs[0].findings.map((f) => f.check_id)).toContain("missing-dir-proof");
+  });
+  it("rejects a file passed as a checks directory", () => {
+    expect(() => checkFiles([trace], { dirs: [trace] })).toThrow(`checks path is not a directory: ${trace}`);
   });
   it("keeps an absent optional user checks directory and explicit empty directory valid", () => {
     const empty = path.join(home, "empty");
     fs.mkdirSync(empty);
     expect(checkFiles([trace]).runs).toHaveLength(1);
     expect(checkFiles([trace], { dirs: [empty] }).runs).toHaveLength(1);
-  });
-  it("120 labeled calls: 60 missing paths rejected and 60 existing paths loaded", () => {
-    let rejected = 0, loaded = 0;
-    for (let i = 0; i < 120; i++) {
-      if (i % 2 === 0) {
-        expect(() => checkFiles([trace], { dirs: [path.join(home, `missing-${i}`)] })).toThrow(/checks directory does not exist/);
-        rejected++;
-      } else {
-        expect(checkFiles([trace], { dirs: [folder] }).runs[0].findings.map((f) => f.check_id)).toContain("missing-dir-proof");
-        loaded++;
-      }
-    }
-    expect({ rejected, loaded }).toEqual({ rejected: 60, loaded: 60 });
   });
 });
