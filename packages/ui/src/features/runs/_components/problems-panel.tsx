@@ -172,9 +172,7 @@ function ProblemRow({
     f.precision.precision !== null && f.precision.hits >= 3 ? `${pct(f.precision.precision)} of past findings kept` : null,
   ].filter(Boolean);
   const group = [f, ...related];
-  const recorded = (f.detail.params ?? {}) as Record<string, string>;
-  const temporal = typeof recorded.rule_version === "string" && typeof recorded.notice === "string";
-  const params = Object.entries(recorded).filter(([k, v]) => v && (!temporal || !["notice", "rule_version"].includes(k))).slice(0, temporal ? 10 : 2);
+  const params = Object.entries((f.detail.params ?? {}) as Record<string, string>).filter(([, v]) => v).slice(0, 2);
   return (
     <li>
       <button type="button" aria-expanded={expanded} onClick={onToggle} className="flex h-14 w-full cursor-pointer items-center gap-3 px-4 text-left transition-colors hover:bg-surface-subtle focus-visible:ring-1 focus-visible:ring-ring/50 focus-visible:outline-none focus-visible:ring-inset">
@@ -205,11 +203,10 @@ function ProblemRow({
               <span className="text-foreground">{related.map((r) => r.title).join(" · ")}</span>
             </p>
           )}
-          {temporal && <p className="text-xs text-muted-foreground">{recorded.notice}</p>}
           {params.map(([k, v]) => (
             <p key={k} className="text-xs">
               <span className="text-muted-foreground">{k} </span>
-              <span className="break-all text-foreground">{v}</span>
+              <span className="text-foreground">{v}</span>
             </p>
           ))}
           <div className="flex flex-wrap items-center justify-between gap-2">
