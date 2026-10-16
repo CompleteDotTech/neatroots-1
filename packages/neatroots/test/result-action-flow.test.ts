@@ -65,7 +65,7 @@ describe("result/action recorded flow", () => {
     } finally { fs.rmSync(home, { recursive: true, force: true }); }
   });
 
-  it("rechecks late recorded data, resolves stale evidence, and deduplicates repeated snapshots and rule versions", async () => {
+  it("uses the normal end-of-run path and does not persist offline coverage", async () => {
     const tb = await makeRoots();
     try {
       tb.roots.checks.save(contract(), "db", "mcp");
@@ -76,36 +76,12 @@ describe("result/action recorded flow", () => {
       await tb.roots.engine!.waitIdle(traceId, 5000);
       expect(tb.roots.store.findingsForTrace(traceId).filter((f) => f.check_id === "permission-contract")).toEqual([]);
       tb.roots.ingest([batch([parent, markerSpan(traceId, root)])]);
-      const first = await until(() => tb.roots.store.findingsForTrace(traceId).find((f) => f.check_id === "permission-contract"));
-      expect(first.evidence_span_ids).toEqual([result.spanId, action.spanId]);
-      expect(tb.roots.store.notesForTrace(traceId).filter((n) => n.finding_id === first.id)).toEqual([]);
-      await tb.roots.engine!.recheck(traceId);
-      expect(tb.roots.store.findingsForTrace(traceId).filter((f) => f.check_id === "permission-contract")).toHaveLength(1);
-      (tb.roots.engine as unknown as { live: Map<string, unknown> }).live.delete(traceId);
-      const clearing = toolSpan(traceId, root, "permission", "{}", '{"allowed":true}');
-      clearing.startTimeUnixNano = String(BigInt(result.endTimeUnixNano) + 100_000n);
-      clearing.endTimeUnixNano = String(BigInt(result.endTimeUnixNano) + 500_000n);
-      tb.roots.ingest([batch([clearing])]);
-      await until(() => tb.roots.store.getFinding(first.id)?.status === "resolved");
-      const blockedAgain = { ...clearing, attributes: [s("neatlogs.tool.name", "permission"), s("neatlogs.tool.output", '{"allowed":false}'), s("neatlogs.span.kind", "tool")] };
-      tb.roots.ingest([batch([blockedAgain])]);
-      const second = await until(() => tb.roots.store.openFindingFor(traceId, "permission-contract"));
-      await tb.roots.engine!.recheck(traceId);
-      expect(tb.roots.store.findingsForTrace(traceId).filter((f) => f.check_id === "permission-contract")).toHaveLength(2);
-      expect(tb.roots.store.openFindingFor(traceId, "permission-contract")?.id).toBe(second.id);
-      const changed = contract();
-      changed.rule = { ...changed.rule, within_ms: 4000 } as RuleCheck["rule"];
-      tb.roots.checks.save(changed, "db", "mcp");
-      await tb.roots.engine!.recheck(traceId);
-      const versioned = tb.roots.store.openFindingFor(traceId, "permission-contract")!;
-      expect(versioned.id).not.toBe(second.id);
-      expect(tb.roots.store.getFinding(second.id)?.status).toBe("resolved");
-      await tb.roots.engine!.recheck(traceId);
-      expect(tb.roots.store.findingsForTrace(traceId).filter((f) => f.check_id === "permission-contract")).toHaveLength(3);
-      tb.roots.store.updateFinding(versioned.id, { status: "dismissed" });
-      await tb.roots.engine!.recheck(traceId);
-      expect(tb.roots.store.getFinding(versioned.id)?.status).toBe("dismissed");
-      expect(tb.roots.store.findingsForTrace(traceId).filter((f) => f.check_id === "permission-contract")).toHaveLength(3);
+      const finding = await until(() => tb.roots.store.findingsForTrace(traceId).find((f) => f.check_id === "permission-contract"));
+      expect(finding.evidence_span_ids).toEqual([result.spanId, action.spanId]);
+      expect(finding.detail.params).not.toHaveProperty("rule_version");
+      expect(finding.detail.params).not.toHaveProperty("skipped");
+      expect(finding.detail.params).not.toHaveProperty("notice");
+      expect(tb.roots.store.notesForTrace(traceId).filter((n) => n.finding_id === finding.id)).toEqual([]);
     } finally { await tb.close(); }
-  }, 15000);
+  });
 });
