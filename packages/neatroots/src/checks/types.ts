@@ -172,8 +172,8 @@ export const RuleSpec = z.discriminatedUnion("type", [
       equals: z.union([z.string().max(1000), z.number().finite(), z.boolean(), z.null()]),
       forbids: ExplicitSelector,
       within_ms: z.number().finite().positive().max(3_600_000),
-      scope: z.literal("same_parent"),
-      clock: z.literal("same"),
+      scope: z.literal("same_parent").default("same_parent"),
+      clock: z.literal("same").default("same"),
       correlate: z.object({ result: CorrelationField, action: CorrelationField }).strict().optional(),
     })
     .strict(),
