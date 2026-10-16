@@ -9,7 +9,7 @@ A check is anything neatroots watches for. Checks are YAML, loaded from (later w
 
 ## Rules
 
-Code, no model. Most rules check every span; `result_action` only checks recorded runs at the end or offline.
+Code, no model. Most rules check every span; `result_action`, `unrecovered_error` and `run_end` check recorded runs at the end or offline.
 
 ```yaml
 id: repeated-tool-call
@@ -33,7 +33,7 @@ action: flag              # or halt (your own rules only)
 | `slow` | a matching span took at least `at_least_ms` milliseconds (one slow tool call, not the whole run; use `threshold` with `duration_ms` for the run) |
 | `threshold` | a run metric (`total_tokens`, `llm_calls`, `duration_ms`, …) reaches `at_least` |
 | `match` | a regex matches a span's `input`, `output`, `error` or `name`; an MCP tool result's `content[].text` items are read like plain output too |
-| `requires_before` | a `span` call has no earlier successful `requires` call in the same run, for example a refund with no order lookup |
+| `requires_before` | a `span` call has no earlier successful `requires` call in the same run, for example a refund with no order lookup. Spans can arrive out of order, so during a run it waits 250 ms for a late `requires` span before it raises (or halts), and a finding resolves if the earlier call turns up later |
 | `unrecovered_error` | at run end, the last call of a tool failed (no later success of that tool) and the run still produced a final answer that does not say anything failed (a words check, so it is a hint, not proof) |
 | `result_action` | an explicit structured result/value precedes a configured action within a bounded window and recorded parent scope; end/offline only, uncertainty is skipped |
 | `run_end` | the run ended with `error`, `no_output` or `interrupted` |
