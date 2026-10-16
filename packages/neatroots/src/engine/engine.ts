@@ -69,6 +69,8 @@ interface LiveRun {
   spanQueue: Map<string, string[]>;
   spanBusy: Set<string>;
   spanAsked: Map<string, number>;
+  /** Per span-scope check: spans whose model call failed live; run end asks them once more. */
+  retrySpans: Map<string, Set<string>>;
   /** Per question: flags the second look turned down; after a few, the question stops raising. */
   rejected: Map<string, number>;
   traceEvidence: Map<string, string>;
@@ -121,6 +123,27 @@ export function flagged(c: QuestionCheck, r: DecisionResult): { flagged: boolean
  * model. The local LLM is called only to plan, investigate when triage says it is worth
  * it, write notes for the agent and summarize, within per-run budgets.
  */
+/** Thrown when a span id given to judge matches no span, or more than one, in the run. */
+export class UnknownSpanError extends Error {}
+
+/**
+ * The spans named by ids or unique prefixes (any case), in run order. An id that matches nothing or
+ * more than one span throws, so a question is never judged over less evidence than was asked for.
+ */
+function pickSpans<S extends { id: string }>(spans: S[], ids: string[], traceId: string): S[] {
+  const picked = new Set<string>();
+  for (const raw of ids) {
+    const id = String(raw ?? "").trim().toLowerCase();
+    if (!id) throw new UnknownSpanError(`an empty span id was given for run ${traceId}`);
+    const exact = spans.find((s) => s.id === id);
+    const hits = exact ? [exact] : spans.filter((s) => s.id.startsWith(id));
+    if (!hits.length) throw new UnknownSpanError(`no span ${raw} in run ${traceId}`);
+    if (hits.length > 1) throw new UnknownSpanError(`span id ${raw} matches more than one span in run ${traceId}; use more characters`);
+    picked.add(hits[0].id);
+  }
+  return spans.filter((s) => picked.has(s.id));
+}
+
 export class Engine {
   private live = new Map<string, LiveRun>();
   private workflowPlanning = new Map<string, Promise<PlanRow | undefined>>();
@@ -214,6 +237,7 @@ export class Engine {
       spanQueue: new Map(),
       spanBusy: new Set(),
       spanAsked: new Map(),
+      retrySpans: new Map(),
       rejected: new Map(),
       traceEvidence: new Map(),
       dirty: new Set(),
@@ -340,6 +364,22 @@ export class Engine {
     }
   }
 
+  /** One more try for spans whose model call failed live, still within the slow-mode cap on attempts. */
+  private async retryFailedSpans(run: LiveRun, check: QuestionCheck, params: Record<string, string>): Promise<void> {
+    const retry = run.retrySpans.get(check.id);
+    if (!retry?.size) return;
+    run.retrySpans.delete(check.id);
+    const slow = await this.decisions.isSlow([toQuestion(check, params)]);
+    for (const spanId of retry) {
+      if (slow) {
+        const asked = run.spanAsked.get(check.id) ?? 0;
+        if (asked >= SLOW_SPAN_CHECKS_PER_RUN) break;
+        run.spanAsked.set(check.id, asked + 1);
+      }
+      await this.askSpan(run, check, params, spanId);
+    }
+  }
+
   private async flushDirty(run: LiveRun): Promise<void> {
     const ids = [...run.dirty];
     run.dirty.clear();
@@ -410,7 +450,13 @@ export class Engine {
     const span = snap.spans.find((s) => s.id === spanId);
     if (!span) return;
     const ev = buildEvidence(snap, check.evidence, { focus: span });
-    await this.decideAndApply(run, check, params, ev.text, ev.spanIds, snap, spanId);
+    const outcome = await this.decideAndApply(run, check, params, ev.text, ev.spanIds, snap, spanId);
+    // The model call failed (a timeout or dropped connection lands here too): run end tries once more.
+    if (outcome === "unavailable" && !run.endHandled) {
+      const retry = run.retrySpans.get(check.id) ?? new Set<string>();
+      retry.add(spanId);
+      run.retrySpans.set(check.id, retry);
+    }
   }
 
   private async askTrace(run: LiveRun, check: QuestionCheck, params: Record<string, string>, snap: TraceSnapshot): Promise<void> {
@@ -420,7 +466,9 @@ export class Engine {
     const key = ev.spanIds.join(",") + (check.evidence?.final_output ? `|${finalOutput(snap) ?? ""}` : "");
     if (run.traceEvidence.get(check.id) === key) return;
     run.traceEvidence.set(check.id, key);
-    await this.decideAndApply(run, check, params, ev.text, ev.spanIds, snap, null);
+    const outcome = await this.decideAndApply(run, check, params, ev.text, ev.spanIds, snap, null);
+    // Not asked after all, so the run-end pass asks again; unless an overlapping pass cached newer evidence.
+    if (outcome === "unavailable" && run.traceEvidence.get(check.id) === key) run.traceEvidence.delete(check.id);
   }
 
   private async decideAndApply(
@@ -431,7 +479,7 @@ export class Engine {
     spanIds: string[],
     snap: TraceSnapshot,
     spanId: string | null,
-  ): Promise<void> {
+  ): Promise<"unavailable" | void> {
     let result: DecisionResult;
     try {
       result = await this.decisions.decide(evidence, [toQuestion(check, params)]);
@@ -440,7 +488,7 @@ export class Engine {
       if (err instanceof DecisionUnavailableError || err instanceof LlmUnavailableError) {
         if (!this.decisionDown) log.warn(`questions skipped: ${(err as Error).message}`);
         this.decisionDown = true;
-        return;
+        return "unavailable";
       }
       // A model error or timeout is a failed check, never a "no".
       const existing = this.roots.store.latestFindingFor(run.traceId, check.id);
@@ -942,6 +990,7 @@ ${library}`;
         }
         run.spanQueue.set(check.id, queue);
         await this.drainSpanQueue(run, check, params);
+        await this.retryFailedSpans(run, check, params);
       } else {
         await this.askTrace(run, check, params, snap);
       }
@@ -1047,7 +1096,7 @@ ${library}`;
     let text: string;
     let spanIds: string[];
     if (opts.spanIds?.length) {
-      const spans = snap.spans.filter((s) => opts.spanIds!.includes(s.id) || opts.spanIds!.some((id) => s.id.startsWith(id)));
+      const spans = pickSpans(snap.spans, opts.spanIds, traceId);
       const g = runGoal(snap);
       text = [g.user ? `User request: ${clip(g.user, 600)}` : "", "Spans:", ...spans.map((s) => describeSpan(s, ["input", "output", "status", "error"]))].filter(Boolean).join("\n");
       spanIds = spans.map((s) => s.id);
@@ -1067,7 +1116,14 @@ ${library}`;
     total: number;
     truncated: boolean;
   }> {
-    const runs = this.roots.store.listRuns({ workflow: opts.workflow, project: opts.project, limit: opts.limit ?? 50 }).filter((r) => r.status !== "running");
+    const limit = opts.limit ?? 50;
+    // Only runs the check would watch: the engine skips runs outside its applies_to, so a preview
+    // over them would report hits the check can never raise. Look further back to still fill `limit`.
+    const runs = this.roots.store
+      .listRuns({ workflow: opts.workflow, project: opts.project, limit: check.applies_to ? 500 : limit })
+      .filter((r) => r.status !== "running")
+      .filter((r) => this.appliesTo(check, { project: r.project ?? "unknown", workflow: r.workflow ?? r.project ?? "unknown" }))
+      .slice(0, limit);
     const deadline = Date.now() + (opts.timeBudgetMs ?? 90_000);
     const hits: { trace_id: string; probability: number | null; evidence_span_ids: string[]; root_name: string | null }[] = [];
     let checked = 0;

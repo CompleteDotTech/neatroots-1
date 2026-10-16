@@ -10,10 +10,11 @@ import { mountApi } from "./api.js";
 import { mountMcpHttp } from "../mcp/http.js";
 import { log } from "../util/log.js";
 import { VERSION } from "../version.js";
+import { ingestAllowOriginHeader, ingestOriginAllowed } from "./ingest-guard.js";
 
 export { VERSION };
 
-function findUiDir(): string | undefined {
+export function findUiDir(): string | undefined {
   let dir = path.dirname(fileURLToPath(import.meta.url));
   for (let i = 0; i < 6; i++) {
     for (const candidate of [path.join(dir, "ui"), path.join(dir, "dist", "ui"), path.join(dir, "..", "ui", "dist")]) {
@@ -38,7 +39,9 @@ const MIME: Record<string, string> = {
 /**
  * neatroots listens on loopback only. The Host check blocks DNS-rebinding pages, and the
  * Origin check stops other websites from calling the app API from a browser. The OTLP
- * routes stay open to any origin so browser SDKs can send traces.
+ * routes take browser traces from pages on this machine, and from other sites only when
+ * they are listed in ingest.allowedOrigins, so a website can't plant runs that coding
+ * agents read over MCP.
  */
 function securityMiddleware(roots: Roots) {
   return async (c: import("hono").Context, next: () => Promise<void>) => {
@@ -49,11 +52,17 @@ function securityMiddleware(roots: Roots) {
     const origin = c.req.header("origin");
     const isOtlp = c.req.path.startsWith("/v1/");
     if (isOtlp) {
+      const { allowedOrigins } = roots.config.ingest;
+      if (!ingestOriginAllowed(origin, allowedOrigins)) {
+        return c.json({ error: `traces from ${origin} are not accepted; add this origin to ingest.allowedOrigins in config.yaml to send from that page` }, 403);
+      }
+      const allowOrigin = ingestAllowOriginHeader(origin, allowedOrigins);
       if (c.req.method === "OPTIONS") {
         return new Response(null, {
           status: 204,
           headers: {
-            "access-control-allow-origin": "*",
+            "access-control-allow-origin": allowOrigin,
+            vary: "origin",
             "access-control-allow-methods": "POST, OPTIONS",
             "access-control-allow-headers": "content-type, content-encoding, authorization, x-api-key, x-neatlogs-doctor",
             "access-control-max-age": "86400",
@@ -61,7 +70,8 @@ function securityMiddleware(roots: Roots) {
         });
       }
       await next();
-      c.res.headers.set("access-control-allow-origin", "*");
+      c.res.headers.set("access-control-allow-origin", allowOrigin);
+      c.res.headers.append("vary", "origin");
       return;
     }
     if (origin) {
@@ -104,7 +114,9 @@ export function createApp(roots: Roots): Hono {
     }
     const rel = decodeURIComponent(c.req.path).replace(/^\/+/, "");
     let file = path.join(uiDir, rel);
-    if (!file.startsWith(uiDir) || !rel || !fs.existsSync(file) || fs.statSync(file).isDirectory()) file = path.join(uiDir, "index.html");
+    // Append path.sep before the prefix check so a sibling directory whose name starts
+    // with the same string as uiDir (e.g. ui-x/) cannot be reached via path traversal.
+    if (!file.startsWith(uiDir + path.sep) || !rel || !fs.existsSync(file) || fs.statSync(file).isDirectory()) file = path.join(uiDir, "index.html");
     const ext = path.extname(file);
     const headers: Record<string, string> = { "content-type": MIME[ext] ?? "application/octet-stream" };
     if (rel.startsWith("assets/")) headers["cache-control"] = "public, max-age=31536000, immutable";

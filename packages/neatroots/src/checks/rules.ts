@@ -33,10 +33,13 @@ function keyOf(s: SpanInfo, fields: string[]): string {
 }
 
 /** Words an agent uses when it tells the user something went wrong. */
-const ADMITS_FAILURE = /\b(fail(ed|s|ure|ing)?|errors?|unable|couldn'?t|could not|can'?t|cannot|unfortunately|sorry|apologi[sz]e|didn'?t (go through|work|succeed)|not (able|successful|completed)|try again|retry)\b/i;
+const ADMITS_FAILURE = /\b(fail(ed|s|ures?|ing)?|errors?|unable|couldn'?t|could not|can'?t|can ?not|unfortunately|sorry|apologi[sz]e|(didn'?t|did not|doesn'?t|does not|won'?t|will not) (go through|work|succeed)|(not|wasn'?t|weren'?t) (able|successful|completed)|try again|retry)\b/i;
 
-/** "No errors", "without any failures", "no need to try again": the answer says nothing failed. */
-const DENIES_FAILURE = /\b(?:no|zero|without(?: any)?|free of)\s+(?:\w+\s+)?(?:errors?|fail(?:ures?|ed)?|issues?|problems?)\b|\bno need to (?:try again|retry)\b/gi;
+/** Curly, modifier, backtick, and fullwidth apostrophes, as models often write "couldn’t". */
+const APOSTROPHES = /[\u2018\u2019\u02BC\u0060\uFF07]/g;
+
+/** "No errors", "0 failures", "weren't any failures", "no need to try again": the answer says nothing failed. */
+const DENIES_FAILURE = /\b(?:no|zero|0|without(?: any)?|free of|(?:weren'?t|wasn'?t|were not|was not|never(?:\s+\w+)?)\s+any)\s+(?:\w+\s+)?(?:errors?|fail(?:ures?|ed)?|issues?|problems?)\b|\bno need to (?:try again|retry)\b/gi;
 
 function clip(s: string, n = 120): string {
   return s.length > n ? s.slice(0, n - 1) + "…" : s;
@@ -217,7 +220,7 @@ export function evaluateRule(check: RuleCheck, t: TraceSnapshot, atEnd: boolean,
       const out = finalOutput(t);
       if (!out || /^("?\s*"?|null|\{\}|\[\])$/.test(out.trim())) return null;
       // An answer that says something failed is the agent being honest, not a problem.
-      if (ADMITS_FAILURE.test(out.replace(DENIES_FAILURE, " "))) return null;
+      if (ADMITS_FAILURE.test(out.replace(APOSTROPHES, "'").replace(DENIES_FAILURE, " "))) return null;
       const spans = selectSpans(t.spans, r.span ?? { type: ["tool", "mcp_tool"] }).sort((a, b) => a.endMs - b.endMs || a.seq - b.seq);
       // The last call of each tool decides it: a later success means the agent recovered.
       const last = new Map<string, SpanInfo>();
@@ -256,22 +259,29 @@ export function evaluateRule(check: RuleCheck, t: TraceSnapshot, atEnd: boolean,
       const spans = selectSpans(t.spans, r.span).sort((a, b) => a.endMs - b.endMs);
       const names = spans.map((s) => s.toolName ?? s.name);
       const outs = spans.map((s) => jsonKey(s.output));
-      // Longest tail of the call list that is one short pattern repeated with no new results.
+      // Stretches of the call list that are one short pattern repeated with no new results, found
+      // in one pass per period. One still holds if it reaches the newest call or a fresh span
+      // completed it; otherwise the newest stretch is reported as one the agent broke out of.
+      let best: { start: number; end: number; p: number; firing: boolean } | undefined;
       for (let p = 2; p <= r.max_period; p++) {
-        let n = spans.length;
-        while (n - p >= 0 && names[n - 1] === names[n - 1 - p] && outs[n - 1] === outs[n - 1 - p]) n--;
-        const start = n - p;
-        const len = spans.length - start;
-        if (start < 0 || len < p * r.min_cycles) continue;
-        const pattern = names.slice(start, start + p);
-        if (new Set(pattern).size < 2) continue;
-        return {
-          firing: true,
-          evidenceSpanIds: spans.slice(start).map((s) => s.id),
-          params: { pattern: pattern.join(" -> "), count: String(Math.floor(len / p)) },
-        };
+        let start = 0;
+        for (let end = p; end <= spans.length; end++) {
+          if (end < spans.length && names[end] === names[end - p] && outs[end] === outs[end - p]) continue;
+          // spans[start, end) repeat with period p; the next stretch can begin p - 1 calls back.
+          const from = start;
+          start = end - p + 1;
+          if (end - from < p * r.min_cycles || new Set(names.slice(from, from + p)).size < 2) continue;
+          const firing = end === spans.length || (!!fresh && spans.slice(from + p * r.min_cycles - 1, end).some((s) => fresh.has(s.id)));
+          if (!best || (firing && !best.firing) || (firing === best.firing && end > best.end)) best = { start: from, end, p, firing };
+        }
       }
-      return null;
+      if (!best) return null;
+      const { start, end, p } = best;
+      return {
+        firing: best.firing,
+        evidenceSpanIds: spans.slice(start, end).map((s) => s.id),
+        params: { pattern: names.slice(start, start + p).join(" -> "), count: String(Math.floor((end - start) / p)) },
+      };
     }
     case "run_end": {
       if (!atEnd || !t.run) return null;

@@ -6,7 +6,7 @@ import { listCloudTraces, NO_CLOUD_TOKEN } from "../ingest/importers/neatlogs-cl
 import { cloudImportAuth, cloudImportBase } from "../ingest/importers/index.js";
 import { preview } from "../semantics/view.js";
 import { runSummary } from "../server/api.js";
-import { clip, def, resolveSpan, resolveTrace, type ToolDef } from "./tools.js";
+import { clip, def, fallbackNote, resolveSpan, resolveTrace, resolveTraceNoting, type ToolDef } from "./tools.js";
 
 // Tools for exploring runs: where a span sits, finding things inside one run, conversations
 // across runs, comparing two runs, read-only SQL over the local store, opening something in the
@@ -41,7 +41,8 @@ export const EXPLORE_TOOLS = [
     readOnly: true,
     input: { trace_id: z.string().optional(), span_id: z.string().optional(), view: z.enum(["overview", "trace", "timeline", "conversation"]).optional() },
     run: async (roots, a) => {
-      const traceId = resolveTrace(roots, a.trace_id);
+      const r = resolveTraceNoting(roots, a.trace_id);
+      const traceId = r.traceId;
       const spanId = a.span_id ? resolveSpan(roots, traceId, a.span_id) : null;
       const q = new URLSearchParams();
       if (a.view) q.set("view", a.view);
@@ -49,7 +50,7 @@ export const EXPLORE_TOOLS = [
       const path = `runs/${traceId}${q.size ? `?${q}` : ""}`;
       roots.focus = { trace_id: traceId, span_id: spanId, at: Date.now() };
       roots.bus.emit("navigate", { path });
-      return { shown: true, url: `http://localhost:${roots.config.port}/#/${path}` };
+      return { shown: true, url: `http://localhost:${roots.config.port}/#/${path}`, ...fallbackNote(r) };
     },
   }),
   def({
@@ -59,7 +60,8 @@ export const EXPLORE_TOOLS = [
     readOnly: true,
     input: { trace_id: z.string().optional(), span_id: z.string() },
     run: async (roots, a) => {
-      const traceId = resolveTrace(roots, a.trace_id);
+      const r = resolveTraceNoting(roots, a.trace_id);
+      const traceId = r.traceId;
       const id = resolveSpan(roots, traceId, a.span_id);
       const t = loadTrace(roots.store, traceId);
       const byId = new Map(t.spans.map((s) => [s.id, s]));
@@ -82,6 +84,7 @@ export const EXPLORE_TOOLS = [
           return i >= 0 && i < siblings.length - 1 ? withIo(siblings[i + 1]) : null;
         })(),
         children: children.map(withIo),
+        ...fallbackNote(r),
       };
     },
   }),
@@ -92,7 +95,8 @@ export const EXPLORE_TOOLS = [
     readOnly: true,
     input: { trace_id: z.string().optional(), query: z.string().min(1), kinds: z.array(z.string()).optional().describe("Only these span kinds, e.g. LLM, TOOL") },
     run: async (roots, a) => {
-      const traceId = resolveTrace(roots, a.trace_id);
+      const r = resolveTraceNoting(roots, a.trace_id);
+      const traceId = r.traceId;
       const q = a.query.toLowerCase();
       const kinds = a.kinds?.map((k) => k.toUpperCase());
       const hits = [];
@@ -112,7 +116,7 @@ export const EXPLORE_TOOLS = [
         }
         if (hits.length >= 50) break;
       }
-      return { trace_id: traceId, query: a.query, matches: hits.length, spans: hits };
+      return { trace_id: traceId, query: a.query, matches: hits.length, spans: hits, ...fallbackNote(r) };
     },
   }),
   def({
@@ -122,12 +126,19 @@ export const EXPLORE_TOOLS = [
     readOnly: true,
     input: { session_id: z.string().optional(), trace_id: z.string().optional() },
     run: async (roots, a) => {
-      const session = a.session_id ?? roots.store.getRun(resolveTrace(roots, a.trace_id))?.session_id;
-      if (!session) return { session_id: null, note: "This run has no session id. Agents set one with neatlogs.init(session_id=…) or the neatlogs.session.id attribute." };
+      // A run is only looked up without a session id; then the agent hears if the run in focus was deleted.
+      const resolved = a.session_id ? undefined : resolveTraceNoting(roots, a.trace_id);
+      const fellBack = resolved ? fallbackNote(resolved) : {};
+      const session = a.session_id ?? roots.store.getRun(resolved!.traceId)?.session_id;
+      if (!session) {
+        const why = "This run has no session id. Agents set one with neatlogs.init(session_id=…) or the neatlogs.session.id attribute.";
+        return { session_id: null, note: [fellBack.note, why].filter(Boolean).join(" ") };
+      }
       const runs = roots.store.listRuns({ sessionId: session, limit: 200 }).sort((x, y) => (x.started_ms ?? 0) - (y.started_ms ?? 0));
       return {
         session_id: session,
         turns: runs.map((r, i) => ({ turn: i + 1, trace_id: r.trace_id, status: r.status, input: clip(r.input_preview, 600), output: clip(r.output_preview, 600), open_problems: r.open_finding_count })),
+        ...fellBack,
       };
     },
   }),
@@ -206,9 +217,10 @@ export const EXPLORE_TOOLS = [
       system: z.string().optional(),
     },
     run: async (roots, a) => {
-      const traceId = resolveTrace(roots, a.trace_id);
+      const resolved = resolveTraceNoting(roots, a.trace_id);
+      const traceId = resolved.traceId;
       const r = await roots.replays.replayLlm(traceId, resolveSpan(roots, traceId, a.span_id), { messages: a.messages, model: a.model, system: a.system });
-      return { replay_id: r.id, state: r.state, error: r.error, new_trace_id: r.new_trace_id, answer: r.output_preview };
+      return { replay_id: r.id, state: r.state, error: r.error, new_trace_id: r.new_trace_id, answer: r.output_preview, ...fallbackNote(resolved) };
     },
   }),
   def({

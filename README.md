@@ -117,8 +117,9 @@ uv run agent.py "Please refund order 1001"
 MODEL=mock-sloppy uv run agent.py "Please refund order 4512"   # claims success after a failed tool
 ```
 
-Open http://localhost:4100 and click the run. `sh ~/.neatroots/app/examples/run-all.sh` runs every
-example and checks each one produced a run. [examples/](examples) lists them: OpenAI, Anthropic,
+Open http://localhost:4100 and click the run. `sh ~/.neatroots/app/examples/run-all.sh` runs the
+automated agent examples and the HTTP API example, and checks that each produced a run.
+Run `browser`, `import-files`, `refund-agent`, and `samples` separately/by hand. [examples/](examples) lists them: OpenAI, Anthropic,
 LangGraph, OpenAI Agents SDK handoffs, sub-agents, multi-turn sessions, replay, plain OpenTelemetry,
 TypeScript, Vercel AI SDK, the HTTP API, a browser page, and trace files to import.
 
@@ -288,7 +289,7 @@ pnpm test                     # server and TypeScript steering tests (vitest)
 pnpm --filter @neatlogs/neatroots-ui e2e     # UI end-to-end tests (Playwright; real server, mock LLM)
 (cd python/neatroots-steer && python -m pytest)
 pnpm typecheck                # all pnpm workspaces
-sh examples/run-all.sh        # every example, against a running neatroots
+sh examples/run-all.sh        # agent and HTTP API examples against a running neatroots; browser, import-files, refund-agent, samples by hand
 pnpm --filter @neatlogs/neatroots dev        # server with reload on 4100
 pnpm --filter @neatlogs/neatroots-ui dev     # UI on 5173 (set NEATROOTS_DEV_ORIGIN=http://localhost:5173 on the server)
 ```
