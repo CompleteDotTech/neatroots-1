@@ -1,3 +1,4 @@
+import { evaluateResultAction } from "./result-action.js";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -57,9 +58,10 @@ export function checkFiles(files: string[], opts: OfflineOptions = {}): { runs: 
           const a = rule.applies_to;
           const list = (v: string | string[] | undefined) => (v === undefined ? undefined : Array.isArray(v) ? v : [v]);
           if (run && ((list(a?.project) && !list(a?.project)!.includes(run.project ?? "")) || (list(a?.workflow) && !list(a?.workflow)!.includes(run.workflow ?? "")))) continue;
-          const hit = evaluateRule(rule, snap, true);
-          if (hit && rule.rule.type === "result_action") rule_evaluations.push({ check_id: rule.id, actions: Number(hit.params.actions), evaluated: Number(hit.params.evaluated), matched: Number(hit.params.count), skipped: JSON.parse(hit.params.skipped) });
-          if (hit && (rule.rule.type !== "result_action" || hit.firing)) findings.push({ check_id: rule.id, title: rule.title ?? hit.title ?? rule.id, evidence_span_ids: hit.evidenceSpanIds, params: hit.params });
+          const temporal = rule.rule.type === "result_action" ? evaluateResultAction(rule.rule, snap) : undefined;
+          const hit = temporal ? temporal.hit : evaluateRule(rule, snap, true);
+          if (temporal) rule_evaluations.push({ check_id: rule.id, ...temporal.coverage });
+          if (hit) findings.push({ check_id: rule.id, title: rule.title ?? hit.title ?? rule.id, evidence_span_ids: hit.evidenceSpanIds, params: hit.params });
         }
         runs.push({ file, trace_id: traceId, root_name: run?.root_name ?? null, findings, ...(rule_evaluations.length ? { rule_evaluations } : {}) });
       }
