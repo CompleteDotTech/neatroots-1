@@ -1,7 +1,7 @@
-import { evaluateResultAction } from "./result-action.js";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { evaluateResultAction } from "./result-action.js";
 import { rootsHome } from "../config.js";
 import { loadTrace } from "../engine/trace.js";
 import { parseTraceFile } from "../ingest/importers/file.js";
@@ -64,6 +64,7 @@ export function checkFiles(files: string[], opts: OfflineOptions = {}): { runs: 
           if (hit) findings.push({ check_id: rule.id, title: rule.title ?? hit.title ?? rule.id, evidence_span_ids: hit.evidenceSpanIds, params: hit.params });
         }
         runs.push({ file, trace_id: traceId, root_name: run?.root_name ?? null, findings, ...(rule_evaluations.length ? { rule_evaluations } : {}) });
+        store.deleteRun(traceId);
       }
     }
     return { runs, rules: rules.map((r) => r.id), errors };
