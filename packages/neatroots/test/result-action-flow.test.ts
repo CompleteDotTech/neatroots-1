@@ -85,3 +85,32 @@ describe("result/action recorded flow", () => {
     } finally { await tb.close(); }
   });
 });
+
+describe("offline contract CLI coverage", () => {
+  it("reports no actions and fully evaluated clean actions as clean, but marks skipped actions", async () => {
+    const { spawnSync } = await import("node:child_process");
+    const { fileURLToPath } = await import("node:url");
+    const home = tmpHome();
+    try {
+      const checks = path.join(home, "checks"); fs.mkdirSync(checks);
+      fs.writeFileSync(path.join(checks, "contract.yaml"), JSON.stringify(contract()));
+      for (const mode of ["no-action", "clean-action", "skipped-action"]) {
+        const traceId = hex(16), root = hex(8);
+        const { result, action, parent } = recorded(traceId, root, false);
+        const spans = mode === "no-action" ? [result, parent] : mode === "clean-action" ? [result, action, parent] : [action, parent];
+        const file = path.join(home, `${mode}.json`);
+        fs.writeFileSync(file, JSON.stringify({ resourceSpans: [{ resource: batch([]).resource, scopeSpans: [{ spans }] }] }));
+        const args = ["--import", "tsx", "src/cli.ts", "check", file, "--checks", checks, "--only", "permission-contract"];
+        const out = spawnSync(process.execPath, args, { cwd: fileURLToPath(new URL("..", import.meta.url)), env: { ...process.env, NEATROOTS_HOME: path.join(home, "isolated") }, encoding: "utf8" });
+        expect(out.status, out.stderr).toBe(0);
+        if (mode === "skipped-action") {
+          expect(out.stdout).toContain("? "); expect(out.stdout).toContain("coverage incomplete"); expect(out.stdout).toContain("0/1 actions evaluated");
+        } else {
+          expect(out.stdout).toContain("✓ "); expect(out.stdout).not.toContain("coverage incomplete"); expect(out.stdout).not.toContain("actions evaluated");
+        }
+        const json = checkFiles([file], { dirs: [checks], only: ["permission-contract"] });
+        expect(json.runs[0].rule_evaluations?.[0].actions).toBe(mode === "no-action" ? 0 : 1);
+      }
+    } finally { fs.rmSync(home, { recursive: true, force: true }); }
+  });
+});
