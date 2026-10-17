@@ -22,15 +22,19 @@ export class SearchIds {
   }
 
   /**
-   * Same row count and highest rowid as span_fts. FTS5 keeps one span_fts_docsize row per indexed
-   * row, so that is counted: counting span_fts itself reads every row. A store also written by a
-   * version without span_fts_ids differs, and is rebuilt.
+   * Same row count, highest rowid and newest rows as span_fts. FTS5 keeps one span_fts_docsize row
+   * per indexed row, so that is counted: counting span_fts itself reads every row. A version
+   * without span_fts_ids that writes to the store changes the count or the highest rowid, unless it
+   * deletes the newest rows and adds as many: SQLite then reuses their rowids, which run up to the
+   * highest one, so the newest rows no longer match. Comparing every row would read all the text.
    */
   private inSync(): boolean {
     try {
       const fts = this.db.prepare("SELECT COUNT(*) AS n, MAX(id) AS m FROM span_fts_docsize").get() as Counts;
       const ids = this.db.prepare("SELECT COUNT(*) AS n, MAX(id) AS m FROM span_fts_ids").get() as Counts;
-      return fts.n === ids.n && fts.m === ids.m;
+      if (fts.n !== ids.n || fts.m !== ids.m) return false;
+      const newest = (sql: string) => JSON.stringify(this.db.prepare(sql).all());
+      return newest("SELECT rowid AS id, trace_id, span_id FROM span_fts ORDER BY rowid DESC LIMIT 1000") === newest("SELECT id, trace_id, span_id FROM span_fts_ids ORDER BY id DESC LIMIT 1000");
     } catch {
       return false;
     }
@@ -89,10 +93,18 @@ export class SearchIds {
     let n = 0;
     const step = () => {
       if (!this.db.open) return;
-      // A BigInt binds as an integer. FTS5 ignores a rowid bound given as a real (which a JS
-      // number binds as) and scans from the first row, so each chunk would read all before it.
-      const rows = read.all(BigInt(after), CHUNK) as Row[];
-      fill(rows);
+      let rows: Row[];
+      try {
+        // A BigInt binds as an integer. FTS5 ignores a rowid bound given as a real (which a JS
+        // number binds as) and scans from the first row, so each chunk would read all before it.
+        rows = read.all(BigInt(after), CHUNK) as Row[];
+        fill(rows);
+      } catch {
+        // The database is busy or failing: keep the scans (always correct) and try at the next start.
+        this.rebuilding = false;
+        onDone?.(n, false);
+        return;
+      }
       n += rows.length;
       if (rows.length === CHUNK) {
         after = rows[rows.length - 1].id;

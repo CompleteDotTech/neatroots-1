@@ -137,6 +137,55 @@ describe("search index run ids", () => {
     expect(st.listRuns({ text: "invoice b" }).map((r) => r.trace_id)).toEqual([b]);
   });
 
+  it("are rebuilt when an older version reused the rowids of the newest index rows", async () => {
+    const dir = dataDir();
+    let st = trackedStore(dir);
+    run(st, "alpha");
+    const b = run(st, "bravo");
+    const c = run(st, "charlie");
+    // An older version deletes the newest index rows (run c's) and indexes as many other spans.
+    // SQLite gives those the same rowids, so the row count and the highest rowid don't change.
+    const top = (st.db.prepare("SELECT rowid AS id FROM span_fts WHERE trace_id = ?").all(c) as { id: number }[]).map((r) => r.id);
+    const before = st.db.prepare("SELECT COUNT(*) AS n, MAX(rowid) AS m FROM span_fts").get();
+    st.db.prepare(`DELETE FROM span_fts WHERE rowid IN (${top.map(() => "?").join(",")})`).run(...top);
+    for (const _ of top) st.db.prepare("INSERT INTO span_fts (trace_id, span_id, name, tool_name, body) VALUES (?, ?, 'lookup', 'lookup', 'delta')").run(b, hex(8));
+    expect(st.db.prepare("SELECT COUNT(*) AS n, MAX(rowid) AS m FROM span_fts").get()).toEqual(before);
+    st.close();
+    st = trackedStore(dir);
+    expect(st.listRuns({ text: "delta" }).map((r) => r.trace_id)).toEqual([b]);
+    expect(st.searchSpans("delta", 10, [b]).map((h) => h.trace_id)).toEqual([b, b]);
+    expect(await rebuilt(st)).toBe(true);
+    idsMatchIndex(st);
+    expect(st.listRuns({ text: "delta" }).map((r) => r.trace_id)).toEqual([b]);
+    expect(st.searchSpans("delta", 10, [b]).map((h) => h.trace_id)).toEqual([b, b]);
+  });
+
+  it("keep the scans when filling them in fails, and fill them in on a later try", async () => {
+    const dir = dataDir();
+    let st = trackedStore(dir);
+    const a = run(st, "invoice a");
+    st.db.exec("DROP TABLE span_fts_ids");
+    st.close();
+    st = trackedStore(dir);
+    const prepare = st.db.prepare.bind(st.db);
+    st.db.prepare = ((sql: string) => {
+      if (!sql.includes("WHERE rowid > ?")) return prepare(sql);
+      return {
+        all: () => {
+          throw new Error("database is locked");
+        },
+      };
+    }) as unknown as typeof st.db.prepare;
+    try {
+      expect(await rebuilt(st)).toBe(false);
+    } finally {
+      st.db.prepare = prepare;
+    }
+    expect(st.listRuns({ text: "invoice" }).map((r) => r.trace_id)).toEqual([a]);
+    expect(await rebuilt(st)).toBe(true);
+    idsMatchIndex(st);
+  });
+
   it("keep ingest, search and deletes from reading every index row", async () => {
     // Filtering span_fts on trace_id or span_id (unindexed columns) loads every row's text.
     const scan = /FROM span_fts WHERE trace_id|SELECT trace_id(, span_id)? FROM span_fts |MATCH \? AND trace_id/;
