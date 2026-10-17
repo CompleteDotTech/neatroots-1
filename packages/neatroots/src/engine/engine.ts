@@ -206,12 +206,24 @@ export class Engine {
   waitIdle(traceId: string, timeoutMs: number): Promise<boolean> {
     if (!this.pending(traceId)) return Promise.resolve(true);
     return new Promise((resolve) => {
-      const timer = setTimeout(() => resolve(false), timeoutMs);
-      const list = this.idleWaiters.get(traceId) ?? [];
-      list.push(() => {
+      let cb: (() => void) | undefined;
+      const timer = setTimeout(() => {
+        if (cb) {
+          const list = this.idleWaiters.get(traceId);
+          if (list) {
+            const idx = list.indexOf(cb);
+            if (idx >= 0) list.splice(idx, 1);
+            if (!list.length) this.idleWaiters.delete(traceId);
+          }
+        }
+        resolve(false);
+      }, timeoutMs);
+      cb = () => {
         clearTimeout(timer);
         resolve(true);
-      });
+      };
+      const list = this.idleWaiters.get(traceId) ?? [];
+      list.push(cb);
       this.idleWaiters.set(traceId, list);
       const run = this.live.get(traceId);
       if (run?.dirty.size) this.scheduleFlush(run);

@@ -6,7 +6,7 @@ import { loadTrace } from "../src/engine/trace.js";
 import { evaluateRule } from "../src/checks/rules.js";
 import { parseChecks } from "../src/checks/registry.js";
 import type { RuleCheck } from "../src/checks/types.js";
-import { batch, hex, llmSpan, makeRoots, mockLlm, tmpHome, toolSpan, until, type TestRoots } from "./helpers.js";
+import { batch, closeTrackedStores, hex, llmSpan, makeRoots, mockLlm, tmpHome, toolSpan, trackedStore, until, type TestRoots } from "./helpers.js";
 
 // A user's halt rule whose streak ends before the agent's next LLM call (#84).
 
@@ -30,14 +30,15 @@ const rule = (id: string) => rules.find((c) => c.id === id)!;
 const homes: string[] = [];
 const cleanup: (() => Promise<void>)[] = [];
 afterEach(async () => {
-  for (const h of homes.splice(0)) fs.rmSync(h, { recursive: true, force: true });
   for (const c of cleanup.splice(0)) await c();
+  closeTrackedStores();
+  for (const h of homes.splice(0)) fs.rmSync(h, { recursive: true, force: true });
 });
 
 function store(): Store {
   const h = tmpHome();
   homes.push(h);
-  return new Store(path.join(h, "data"));
+  return trackedStore(path.join(h, "data"));
 }
 
 async function setup(withUserRules = true) {

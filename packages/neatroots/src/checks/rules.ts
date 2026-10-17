@@ -45,6 +45,21 @@ function clip(s: string, n = 120): string {
   return s.length > n ? s.slice(0, n - 1) + "…" : s;
 }
 
+/** Retries stay within the nearest agent; ordinary per-turn spans fall back to the run root. */
+function recoveryScope(span: SpanInfo, byId: Map<string, SpanInfo>, rootId: string): string {
+  const seen = new Set([span.id]);
+  let parentId = span.parentId;
+  while (parentId) {
+    if (seen.has(parentId)) break;
+    seen.add(parentId);
+    const parent = byId.get(parentId);
+    if (!parent) break;
+    if (parent.kind === "AGENT") return parent.id;
+    parentId = parent.parentId;
+  }
+  return rootId;
+}
+
 /** How much of a field a `match` rule reads, across all the texts it reads from it. */
 const MATCH_CHARS = 200_000;
 
@@ -224,9 +239,12 @@ export function evaluateRule(check: RuleCheck, t: TraceSnapshot, atEnd: boolean,
       // An answer that says something failed is the agent being honest, not a problem.
       if (ADMITS_FAILURE.test(out.replace(APOSTROPHES, "'").replace(DENIES_FAILURE, " "))) return null;
       const spans = selectSpans(t.spans, r.span ?? { type: ["tool", "mcp_tool"] }).sort((a, b) => a.endMs - b.endMs || a.seq - b.seq);
-      // The last call of each tool decides it: a later success means the agent recovered.
+      // Per-turn spans often change between retries. Scope by the nearest agent-kind ancestor,
+      // falling back to the root for traces without one; malformed parent links also fall back safely.
+      const byId = new Map(t.spans.map((s) => [s.id, s]));
+      const rootId = t.spans.find((s) => s.parentId === null)?.id ?? t.traceId;
       const last = new Map<string, SpanInfo>();
-      for (const s of spans) last.set(s.toolName ?? s.name, s);
+      for (const s of spans) last.set(JSON.stringify([recoveryScope(s, byId, rootId), s.toolName ?? s.name]), s);
       const failed = [...last.values()].filter((s) => s.status === "error");
       if (!failed.length) return null;
       const first = failed[0];

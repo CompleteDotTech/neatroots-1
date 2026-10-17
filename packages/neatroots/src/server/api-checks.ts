@@ -2,7 +2,7 @@ import type { Hono } from "hono";
 import YAML from "yaml";
 import type { Roots } from "../core.js";
 import { AnyCheck, isQuestion, type Check } from "../checks/types.js";
-import { parseChecks } from "../checks/registry.js";
+import { parseChecks, checkDirState } from "../checks/registry.js";
 import { checkWarnings } from "../checks/lint.js";
 import { draftCheckFromConcern } from "../engine/assist.js";
 import { err, body } from "./util.js";
@@ -56,6 +56,13 @@ export function mountChecksApi(app: Hono, roots: Roots): void {
     if (!check) return err(c, 400, error ?? "invalid check");
     const dir = (raw as { dir?: string })?.dir;
     if (dir && !roots.config.checkDirs.includes(dir)) return err(c, 400, "dir must be a registered project checks directory");
+    // A registered path can still be unusable, in a config written before #224 was fixed. Saving
+    // into it would throw EEXIST out of this route, so say what is wrong with it instead. A
+    // directory that isn't there yet is fine: save() makes it, the way a fresh clone works.
+    if (dir) {
+      const state = checkDirState(dir);
+      if (!state.ok && !state.creatable) return err(c, 400, `that checks directory ${state.reason}`);
+    }
     const saved = roots.checks.save(check, dir ? { dir } : "user");
     return c.json({ ok: true, id: saved.check.id, path: saved.path, source: saved.source, warnings: checkWarnings(check) });
   });

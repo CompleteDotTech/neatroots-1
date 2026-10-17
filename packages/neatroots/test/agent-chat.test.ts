@@ -4,7 +4,8 @@ import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { makeRoots, poll, type TestRoots } from "./helpers.js";
 
-// Chats with coding agents inside the app, run against stand-in CLIs that answer like the real ones.
+// These integration fixtures execute POSIX shell scripts. Native Windows agent launching
+// needs separate executable fixtures; do not replace process execution with canned success.
 
 const saved = { HOME: process.env.HOME, NEATROOTS_CODEX_BIN: process.env.NEATROOTS_CODEX_BIN, NEATROOTS_CLAUDE_BIN: process.env.NEATROOTS_CLAUDE_BIN };
 let dir: string | undefined;
@@ -25,7 +26,7 @@ function script(name: string, body: string): string {
   return f;
 }
 
-describe("a chat with Codex", () => {
+describe.skipIf(process.platform === "win32")("a chat with Codex", () => {
   it("sends a follow-up by resuming the session, without the --sandbox that `codex exec resume` rejects", async () => {
     dir = fs.mkdtempSync(path.join(os.tmpdir(), "neatroots-chat-"));
     process.env.HOME = dir;
@@ -54,7 +55,7 @@ echo '{"type":"turn.completed","usage":{"input_tokens":1,"output_tokens":1}}'`,
   });
 });
 
-describe("a chat with Claude Code whose sign-in has expired", () => {
+describe.skipIf(process.platform === "win32")("a chat with Claude Code whose sign-in has expired", () => {
   it("explains what to do, once", async () => {
     dir = fs.mkdtempSync(path.join(os.tmpdir(), "neatroots-chat-"));
     process.env.HOME = dir;
@@ -77,7 +78,7 @@ echo '{"type":"result","subtype":"success","is_error":true,"result":"${err}","se
   });
 });
 
-describe("stopping a chat turn (#23.19)", () => {
+describe.skipIf(process.platform === "win32")("stopping a chat turn (#23.19)", () => {
   it("ends the turn and stops what the agent started, even when a child holds its output open", async () => {
     dir = fs.mkdtempSync(path.join(os.tmpdir(), "neatroots-chat-"));
     process.env.HOME = dir;
@@ -111,7 +112,7 @@ wait`,
   }, 20_000);
 });
 
-describe("stopping a chat turn whose tool ignores SIGTERM", () => {
+describe.skipIf(process.platform === "win32")("stopping a chat turn whose tool ignores SIGTERM", () => {
   it("still kills the tool after the escalation deadline, though the turn has already ended", async () => {
     dir = fs.mkdtempSync(path.join(os.tmpdir(), "neatroots-chat-"));
     process.env.HOME = dir;
@@ -143,7 +144,7 @@ wait`,
   }, 20_000);
 });
 
-describe("a chat with Codex whose message starts with a dash", () => {
+describe.skipIf(process.platform === "win32")("a chat with Codex whose message starts with a dash", () => {
   it("passes the prompt after -- so codex never reads it as a flag, for new and resumed sessions", async () => {
     dir = fs.mkdtempSync(path.join(os.tmpdir(), "neatroots-chat-"));
     process.env.HOME = dir;
