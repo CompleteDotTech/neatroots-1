@@ -37,6 +37,12 @@ action: flag              # or halt (your own rules only; needs steering on for 
 | `unrecovered_error` | at run end, the last call of a tool failed (no later success of that tool) and the run still produced a final answer that does not say anything failed (a words check, so it is a hint, not proof) |
 | `run_end` | the run ended with `error`, `no_output` or `interrupted` |
 
+Span selectors can also use `stream_cancelled: true` to match the public SDK's explicit
+`neatlogs.stream.cancelled` flag (`false` matches only an explicit false value; missing telemetry
+matches neither). The shipped `stream-abandoned` rule flags cancelled LLM replies that have no
+error status. `status: ok` includes both OK and UNSET spans, as successful SDK calls often use
+UNSET. Failed calls remain covered by `llm-call-failed`.
+
 ## Questions
 
 Answered by the decision model with a probability. Yes/no questions are phrased as failures, so a
