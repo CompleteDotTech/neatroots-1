@@ -30,7 +30,7 @@ export class SteeringHub {
   inactiveHalts(checks: Check[]): string[] {
     const projects = Object.keys(this.roots.config.projects);
     return checks
-      .filter((c) => isRule(c) && c.action === "halt")
+      .filter((c) => c.enabled !== false && isRule(c) && c.action === "halt")
       .filter((c) => {
         const scope = c.applies_to?.project;
         const where = scope === undefined ? projects : Array.isArray(scope) ? scope : [scope];
