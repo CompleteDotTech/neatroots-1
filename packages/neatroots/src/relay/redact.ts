@@ -32,7 +32,8 @@ export const BUILTIN_RULES: RedactionRule[] = [
   // host). ? and # can't appear unencoded in userinfo, so "host:443?email=a@b.com" is a port and a query.
   { kind: "url_password", re: /(?<![a-z0-9+.-])([a-z][a-z0-9+.-]*:\/\/[^\s:/@]*:)[^\s@/?#]+(?=@)/gi, keepPrefix: true },
   { kind: "email", re: /(?<![A-Za-z0-9._%+-])[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b/g },
-  { kind: "phone", re: /(?<![\w.])\+?(?:\d{1,3}[\s.-])?\(?\d{3}\)?[\s.-]\d{3}[\s.-]\d{4}(?![\w.])/g },
+  // A trailing "." ends a sentence ("call 415-555-0199."); only ".<digit>" continues a longer number.
+  { kind: "phone", re: /(?<![\w.])\+?(?:\d{1,3}[\s.-])?\(?\d{3}\)?[\s.-]\d{3}[\s.-]\d{4}(?!\w|\.\d)/g },
 ];
 
 /** Credentials, as opposed to personal data: the hosted LLM always has these removed. */
@@ -102,7 +103,11 @@ export function redactBatches(batches: ResourceSpansBatch[], rules: RedactionRul
   const hits: RedactionHit[] = [];
   const out = batches.map((b) => ({
     resource: { ...b.resource, attributes: redactKvs(b.resource.attributes, rules, "resource", hits) },
-    scope: b.scope.attributes ? { ...b.scope, attributes: redactKvs(b.scope.attributes, rules, "scope", hits) } : b.scope,
+    scope: {
+      ...b.scope,
+      ...(b.scope.name ? { name: redactString(b.scope.name, rules, "scope name", hits) } : {}),
+      ...(b.scope.attributes ? { attributes: redactKvs(b.scope.attributes, rules, "scope", hits) } : {}),
+    },
     spans: b.spans.map((s) => {
       // Span and event names often carry a URL or a tool argument, so they are redacted too,
       // and the hit labels use the redacted name so a preview never echoes the raw value.

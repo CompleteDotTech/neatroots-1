@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { decodeTraceProtobuf } from "../src/otlp/codec.js";
 import type { AnyValue, KeyValue } from "../src/otlp/types.js";
 import { BUILTIN_RULES, compileRules, CREDENTIAL_KINDS, redactBatches, redactString } from "../src/relay/redact.js";
-import { batch, hex, makeRoots, s, span } from "./helpers.js";
+import { batch, hex, makeRoots, s, span, toolSpan } from "./helpers.js";
 
 const KEY = "sk-proj-abcdefghij1234567890ABCDEFghij";
 const bytes = (value: string | Uint8Array): AnyValue => ({
@@ -230,5 +230,27 @@ describe("built-in credential formats", () => {
     expect(hits.map((h) => h.kind)).toEqual(["basic_auth", "url_password"]);
     expect(JSON.stringify(hits)).not.toContain("S3cretPass99");
     expect(JSON.stringify(hits)).not.toContain("dXNlcjpzM2NyZXRQYXNzd29yZDEyMw");
+  });
+});
+
+describe("redaction gaps found before 0.2.9", () => {
+  const phone = (text: string) => redactString(text, BUILTIN_RULES, "attr", []);
+  it("redacts a phone number at the end of a sentence", () => {
+    for (const t of ["call me on 415-555-0199.", "or +1 415 555 0199.", "fax 415.555.0199.", "office (415) 555-0199. Thanks"]) {
+      expect(phone(t), t).toContain("[redacted:phone]");
+      expect(phone(t), t).not.toMatch(/0199/);
+    }
+  });
+
+  it("still leaves longer dotted numbers alone", () => {
+    for (const t of ["build 1.415.555.0199.2", "10.415.555.0199.12", "id 415-555-01999"]) expect(phone(t), t).toBe(t);
+  });
+
+  it("redacts the instrumentation scope name", () => {
+    const b = batch([toolSpan(hex(16), hex(8), "lookup", "{}", "ok")]);
+    b.scope.name = "tracer for sk-proj-abcdefghijklmnopqrstuvwxyz0123";
+    const { batches } = redactBatches([b], BUILTIN_RULES);
+    expect(batches[0].scope.name).toContain("[redacted:api_key]");
+    expect(batches[0].scope.name).not.toContain("abcdefghijklmnop");
   });
 });
