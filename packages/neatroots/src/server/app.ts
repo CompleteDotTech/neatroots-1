@@ -83,8 +83,24 @@ function securityMiddleware(roots: Roots) {
   };
 }
 
+/**
+ * No other site may frame the app: a hidden frame could click through actions such as starting
+ * a coding-agent chat with shell commands. Set on every response, refusals included.
+ */
+async function frameHeaders(c: import("hono").Context, next: () => Promise<void>) {
+  await next();
+  try {
+    c.res.headers.set("content-security-policy", "frame-ancestors 'none'");
+    c.res.headers.set("x-frame-options", "DENY");
+    c.res.headers.set("x-content-type-options", "nosniff");
+  } catch {
+    /* a response with immutable headers (none today) keeps its own */
+  }
+}
+
 export function createApp(roots: Roots): Hono {
   const app = new Hono();
+  app.use("*", frameHeaders);
   app.use("*", securityMiddleware(roots));
   // Errors answer as JSON like every other API error: a bad request with its message, anything
   // unexpected as a 500 (logged, never with a stack in the response).
