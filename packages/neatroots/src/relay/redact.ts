@@ -1,13 +1,23 @@
 import type { AnyValue, KeyValue, ResourceSpansBatch } from "../otlp/types.js";
-import { regexProblem } from "../util/regex.js";
-import { log } from "../util/log.js";
+import { replaceWithin } from "../util/regex.js";
 
 export interface RedactionRule {
   kind: string;
   re: RegExp;
   /** The pattern's first group is a label to keep readable ("Bearer ", "postgres://user:"). */
   keepPrefix?: boolean;
+  /** A pattern someone wrote: it runs under a time limit, since a regex can backtrack for minutes. */
+  timed?: boolean;
 }
+
+/**
+ * A saved redaction pattern can't be applied. Redaction fails closed: whatever was about to leave
+ * the machine isn't sent, so data the pattern should remove never goes out unredacted.
+ */
+export class RedactionPatternError extends Error {}
+
+/** How long one saved pattern may run on one value. */
+const PATTERN_MS = 100;
 
 export const BUILTIN_RULES: RedactionRule[] = [
   { kind: "private_key", re: /-----BEGIN [A-Z ]*PRIVATE KEY-----[\s\S]*?-----END [A-Z ]*PRIVATE KEY-----/g },
@@ -38,16 +48,21 @@ export const BUILTIN_RULES: RedactionRule[] = [
 /** Credentials, as opposed to personal data: the hosted LLM always has these removed. */
 export const CREDENTIAL_KINDS = ["private_key", "api_key", "bearer_token", "jwt", "basic_auth", "aws_secret", "url_password"];
 
+/**
+ * The built-in rules plus the user's saved patterns. A saved pattern that doesn't compile throws
+ * (nothing is sent); one that compiles runs with a time limit, including patterns saved before
+ * the app started refusing nested repeats, which keep redacting as they did.
+ */
 export function compileRules(userPatterns: string[]): RedactionRule[] {
   const user: RedactionRule[] = [];
   for (const p of userPatterns) {
-    // Validated when saved in the app; one written into config.yaml by hand is checked here.
-    const problem = regexProblem(p, "g");
-    if (problem) {
-      log.warn(`redaction pattern ${JSON.stringify(p)} skipped: ${problem}`);
-      continue;
+    let re: RegExp;
+    try {
+      re = new RegExp(p, "g");
+    } catch (e) {
+      throw new RedactionPatternError(`redaction pattern ${JSON.stringify(p)} isn't a valid regular expression (${(e as Error).message}), so nothing was sent. Fix or remove it in Settings → Cloud.`);
     }
-    user.push({ kind: "custom", re: new RegExp(p, "g") });
+    user.push({ kind: "custom", re, timed: true });
   }
   return [...BUILTIN_RULES, ...user];
 }
@@ -67,12 +82,21 @@ export function redactString(s: string, rules: RedactionRule[], where: string, h
   let out = s;
   for (const r of rules) {
     r.re.lastIndex = 0;
-    out = out.replace(r.re, (m: string, ...groups: unknown[]) => {
+    const replace = (m: string, ...groups: unknown[]): string => {
       // Keep a captured label ("Bearer ", "postgres://user:") readable; only the secret is masked.
       const prefix = r.keepPrefix && typeof groups[0] === "string" ? (groups[0] as string) : "";
       hits.push({ kind: r.kind, where, sample: mask(m) });
       return `${prefix}[redacted:${r.kind}]`;
-    });
+    };
+    if (!r.timed) {
+      out = out.replace(r.re, replace);
+      continue;
+    }
+    const next = replaceWithin(r.re, out, replace, PATTERN_MS);
+    if (next === undefined) {
+      throw new RedactionPatternError(`redaction pattern ${JSON.stringify(r.re.source)} took longer than ${PATTERN_MS} ms on one value, so nothing was sent. Simplify it in Settings → Cloud.`);
+    }
+    out = next;
   }
   return out;
 }

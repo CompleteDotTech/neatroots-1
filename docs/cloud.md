@@ -41,7 +41,9 @@ Before each send neatroots shows a redaction preview. Emails, phone numbers, pri
 are always redacted: API keys (OpenAI, Anthropic, AWS access key ids, GitHub classic and fine-grained
 tokens, Slack, Google, Stripe, Hugging Face, Groq, npm, Google OAuth), bearer tokens, JWTs, `Basic`
 authorization, AWS secret access keys and passwords in URLs (`scheme://user:password@host`). Add your own
-patterns in Settings. Redaction also inspects OTLP byte
+patterns in Settings. If one of your patterns can't be applied (it isn't a valid regex, or it takes longer
+than 100 ms on a value), nothing is sent and the send log says which pattern to fix; the hosted LLM falls
+back to your local one. Redaction also inspects OTLP byte
 attributes when they contain valid UTF-8 text, while arbitrary binary values remain unchanged. The
 SDK's own `mask` and PII options still apply first, in your process. Every send is logged (Settings →
 Neatlogs Cloud).
