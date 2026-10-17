@@ -20,11 +20,18 @@ export class RedactionPatternError extends Error {}
 const PATTERN_MS = 100;
 
 export const BUILTIN_RULES: RedactionRule[] = [
-  { kind: "private_key", re: /-----BEGIN [A-Z ]*PRIVATE KEY-----[\s\S]*?-----END [A-Z ]*PRIVATE KEY-----/g },
+  // Up to its END line, or to the end of the value: prompts and SDK attributes are often clipped
+  // before the END line, and the key body must not go out just because its end was cut off.
+  { kind: "private_key", re: /-----BEGIN [A-Z ]*PRIVATE KEY(?: BLOCK)?-----[\s\S]*?(?:-----END [A-Z ]*PRIVATE KEY(?: BLOCK)?-----|$)/g },
   {
     kind: "api_key",
-    re: /\b(sk-(?:proj-|ant-)?[A-Za-z0-9_-]{20,}|AKIA[0-9A-Z]{16}|gh[pousr]_[A-Za-z0-9]{30,}|github_pat_[A-Za-z0-9_]{22,}|xox[abprs]-[A-Za-z0-9-]{10,}|AIza[0-9A-Za-z_-]{35}|[sr]k_(?:live|test)_[A-Za-z0-9]{16,}|hf_[A-Za-z0-9]{30,}|gsk_[A-Za-z0-9]{40,}|npm_[A-Za-z0-9]{36}|ya29\.[A-Za-z0-9_-]{20,})\b/g,
+    re: /\b(sk-(?:proj-|ant-)?[A-Za-z0-9_-]{20,}|(?:AKIA|ASIA)[0-9A-Z]{16}|gh[pousr]_[A-Za-z0-9]{30,}|github_pat_[A-Za-z0-9_]{22,}|xox[abprs]-[A-Za-z0-9-]{10,}|AIza[0-9A-Za-z_-]{35}|[sr]k_(?:live|test)_[A-Za-z0-9]{16,}|whsec_[A-Za-z0-9]{24,}|hf_[A-Za-z0-9]{30,}|gsk_[A-Za-z0-9]{40,}|npm_[A-Za-z0-9]{36}|ya29\.[A-Za-z0-9_-]{20,}|nlsa_[A-Za-z0-9_-]{16,}|SG\.[A-Za-z0-9_-]{16,}\.[A-Za-z0-9_-]{16,})\b/g,
   },
+  // Tied to the header name, so a plain hex key counts too.
+  { kind: "api_key", re: /\b(x-api-key\\?["']?\s*[:=]\s*\\?["']?)[A-Za-z0-9_-]{16,}/gi, keepPrefix: true },
+  { kind: "slack_webhook", re: /\b(hooks\.slack\.com\/(?:services|workflows|triggers)\/)[A-Za-z0-9/_-]{20,}/g, keepPrefix: true },
+  // Azure storage and Service Bus / Event Hubs connection strings.
+  { kind: "azure_key", re: /\b((?:AccountKey|SharedAccessKey)=)[A-Za-z0-9+/]{40,}={0,2}/g, keepPrefix: true },
   { kind: "bearer_token", re: /\b(Bearer\s+)[A-Za-z0-9._~+/-]{20,}=*/gi, keepPrefix: true },
   // Matches start only where the run of token characters starts (a lookbehind, not \b), so a long
   // run of "a." or "eyJ-" is scanned once instead of from every word boundary.
@@ -37,7 +44,10 @@ export const BUILTIN_RULES: RedactionRule[] = [
   // quotes may be JSON-escaped (\") when the header sits inside a string attribute.
   { kind: "basic_auth", re: /\b(authorization\\?["']?\s*[:=]\s*\\?["']?basic\s+)[A-Za-z0-9+][A-Za-z0-9+/]{3,}={0,2}(?![A-Za-z0-9+/_-])/gi, keepPrefix: true },
   // The whole value, so a longer one isn't left half visible.
-  { kind: "aws_secret", re: /(aws_secret_access_key\\?["']?\s*[=:]\s*\\?["']?)[A-Za-z0-9/+]{40,}/gi, keepPrefix: true },
+  // AWS secret keys and session tokens, as config keys, JSON (SecretAccessKey) or SDK options (secretAccessKey).
+  { kind: "aws_secret", re: /((?:aws_secret_access_key|secret_?access_?key|aws_session_token|session_?token)\\?["']?\s*[=:]\s*\\?["']?)[A-Za-z0-9/+=]{40,}/gi, keepPrefix: true },
+  // A password or client secret given as a JSON field (the key names it, so any value counts).
+  { kind: "password", re: /(\\?["'](?:password|passwd|pwd|client_secret|api_secret)\\?["']\s*:\s*\\?["'])[^"'\\\r\n]{4,}/gi, keepPrefix: true },
   // Before email, which would otherwise take "password@host" as an address (and miss it for a dotless
   // host). ? and # can't appear unencoded in userinfo, so "host:443?email=a@b.com" is a port and a query.
   { kind: "url_password", re: /(?<![a-z0-9+.-])([a-z][a-z0-9+.-]*:\/\/[^\s:/@]*:)[^\s@/?#]+(?=@)/gi, keepPrefix: true },
@@ -47,7 +57,7 @@ export const BUILTIN_RULES: RedactionRule[] = [
 ];
 
 /** Credentials, as opposed to personal data: the hosted LLM always has these removed. */
-export const CREDENTIAL_KINDS = ["private_key", "api_key", "bearer_token", "jwt", "basic_auth", "aws_secret", "url_password"];
+export const CREDENTIAL_KINDS = ["private_key", "api_key", "bearer_token", "jwt", "basic_auth", "aws_secret", "url_password", "slack_webhook", "azure_key", "password"];
 
 /**
  * The built-in rules plus the user's saved patterns. A saved pattern that doesn't compile throws

@@ -254,3 +254,69 @@ describe("redaction gaps found before 0.2.9", () => {
     expect(batches[0].scope.name).not.toContain("abcdefghijklmnop");
   });
 });
+
+describe("credential formats found by the 0.2.9 egress audit", () => {
+  const all = (text: string) => redactString(text, BUILTIN_RULES, "attr", []);
+  const credentials = (text: string) => redactString(text, BUILTIN_RULES.filter((r) => CREDENTIAL_KINDS.includes(r.kind)), "llm", []);
+  const b64 = (n: number) => "Ab3+".repeat(Math.ceil(n / 4)).slice(0, n);
+  const body = "MIIEowIBAAKCAQEA1b2c3d4e5f6g7h8i9j0kLmNoPqRsTuVwXyZ";
+
+  it("redacts a private key whose END line was cut off, and PGP and OpenSSH keys", () => {
+    for (const t of [
+      `key: -----BEGIN RSA PRIVATE KEY-----\n${body}\n${body}`,
+      `-----BEGIN OPENSSH PRIVATE KEY-----\n${body}\n-----END OPENSSH PRIVATE KEY----- done`,
+      `-----BEGIN PGP PRIVATE KEY BLOCK-----\n\n${body}\n-----END PGP PRIVATE KEY BLOCK-----`,
+    ]) {
+      const out = all(t);
+      expect(out, t.slice(0, 30)).toContain("[redacted:private_key]");
+      expect(out).not.toContain(body);
+    }
+    expect(all("-----BEGIN PUBLIC KEY-----\nMIIBIjAN")).toContain("MIIBIjAN");
+  });
+
+  it("redacts newer credential formats", () => {
+    const secrets = {
+      "AWS temporary key id": "ASIAIOSFODNN7EXAMPLE",
+      "Neatlogs service-account token": "nlsa_Ab12Cd34Ef56Gh78Ij90",
+      "Stripe webhook secret": "whsec_" + "a1B2".repeat(8),
+      "SendGrid key": "SG." + "x".repeat(22) + "." + "y".repeat(43),
+    };
+    for (const [what, s] of Object.entries(secrets)) {
+      const out = credentials(`use ${s} here`);
+      expect(out, what).toContain("[redacted:api_key]");
+      expect(out, what).not.toContain(s);
+    }
+    const hook = "https://hooks.slack.com/services/T00000000/B00000000/" + "X".repeat(24);
+    expect(credentials(`post to ${hook}`)).toMatch(/hooks\.slack\.com\/services\/\[redacted:slack_webhook\]/);
+    const conn = `DefaultEndpointsProtocol=https;AccountName=acct;AccountKey=${b64(86)}==;EndpointSuffix=core.windows.net`;
+    expect(credentials(conn)).toMatch(/AccountKey=\[redacted:azure_key\];EndpointSuffix/);
+    expect(credentials(`x-api-key: ${"0123456789abcdef".repeat(2)}`)).toBe("x-api-key: [redacted:api_key]");
+  });
+
+  it("redacts AWS secrets and session tokens in JSON and SDK forms, and JSON passwords", () => {
+    const secret = b64(40);
+    for (const t of [`{"SecretAccessKey":"${secret}"}`, `secretAccessKey: "${secret}"`, `{"aws_session_token": "${b64(160)}"}`, `{"sessionToken":"${b64(120)}"}`]) {
+      expect(credentials(t), t.slice(0, 20)).toContain("[redacted:aws_secret]");
+      expect(credentials(t)).not.toContain(secret.slice(0, 30));
+    }
+    expect(credentials('{"user":"bob","password":"hunter2!x"}')).toBe('{"user":"bob","password":"[redacted:password]"}');
+    expect(credentials('{\\"client_secret\\": \\"s3cr3t-value\\"}')).toContain("[redacted:password]");
+  });
+
+  it("leaves ordinary text alone", () => {
+    for (const t of ["the password field is required", '{"password_hint":"ask the admin"}', "release SG.1 notes", "AccountKey=short", "Bearer of bad news"]) {
+      expect(all(t), t).toBe(t);
+    }
+  });
+
+  it("stays fast on long inputs aimed at the new patterns", () => {
+    const inputs = ["-----BEGIN RSA PRIVATE KEY-----".repeat(3_300), '"password":"'.repeat(8_000), "AccountKey=".repeat(9_000), "hooks.slack.com/services/".repeat(4_000), "x-api-key: ".repeat(9_000), "SG.".repeat(30_000)];
+    for (const rule of BUILTIN_RULES) {
+      for (const text of inputs) {
+        const started = performance.now();
+        redactString(text, [rule], "x", []);
+        expect(performance.now() - started, `${rule.kind} on ${JSON.stringify(text.slice(0, 12))}…`).toBeLessThan(250);
+      }
+    }
+  });
+});
