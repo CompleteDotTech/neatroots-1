@@ -48,6 +48,8 @@ CREATE TABLE IF NOT EXISTS chat_events (session_id TEXT NOT NULL, seq INTEGER NO
 
 const READ_TOOLS = ["Read", "Grep", "Glob", "LS", "TodoWrite", "mcp__neatroots__*", "mcp__neatroots_app__*"];
 const EDIT_TOOLS = ["Edit", "MultiEdit", "Write", "NotebookEdit"];
+/** neatroots' MCP rerun runs the project's registered agent command, so it counts as a command. */
+const RERUN_TOOLS = ["mcp__neatroots__rerun", "mcp__neatroots_app__rerun"];
 
 /** Where agent CLIs get installed when they aren't on the PATH neatroots was started with. */
 function candidateDirs(): string[] {
@@ -354,6 +356,10 @@ export class AgentChats {
     if (!client || !clientStatus(client).connected) args.push("--mcp-config", JSON.stringify({ mcpServers: { neatroots_app: { type: "http", url: this.mcpUrl() } } }));
     const allowed = [...READ_TOOLS, ...(s.allow_edits ? EDIT_TOOLS : []), ...(s.allow_commands ? ["Bash"] : [])];
     args.push("--allowedTools", allowed.join(","));
+    // Allowing tools isn't enough: the user's own Claude Code settings can allow more. Denying takes
+    // them away, so a chat stays read-only (and doesn't rerun agents) until the user allows it.
+    const denied = [...(s.allow_edits ? [] : EDIT_TOOLS), ...(s.allow_commands ? [] : ["Bash", ...RERUN_TOOLS])];
+    if (denied.length) args.push("--disallowedTools", denied.join(","));
     if (s.allow_edits) args.push("--permission-mode", "acceptEdits");
     args.push("--", prompt);
     return { cmd: "claude", args };

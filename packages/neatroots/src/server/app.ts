@@ -130,10 +130,18 @@ export function createApp(roots: Roots): Hono {
   return app;
 }
 
+function isLoopback(host: string): boolean {
+  return ["127.0.0.1", "localhost", "::1", "[::1]"].includes(host.toLowerCase()) || host.startsWith("127.");
+}
+
 export function startServer(roots: Roots, app: Hono): Promise<ServerType> {
   return new Promise((resolve, reject) => {
     const server = serve({ fetch: app.fetch, port: roots.config.port, hostname: roots.config.host }, (info) => {
       log.info(`listening on http://localhost:${info.port}`);
+      if (!isLoopback(roots.config.host)) {
+        // The API has no login: anyone who can reach this address can read runs and start agent chats.
+        log.warn(`host is ${roots.config.host}, so neatroots is reachable from other machines on ${roots.config.host}:${info.port} with no login. Set host: 127.0.0.1 in config.yaml unless you mean this.`);
+      }
       resolve(server);
     });
     server.on("error", reject);
