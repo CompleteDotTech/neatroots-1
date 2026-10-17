@@ -1,12 +1,14 @@
 import fs from "node:fs";
 import path from "node:path";
-import { expect, test } from "@playwright/test";
+import { expect, test, type TestInfo } from "@playwright/test";
 import { state } from "./util";
 
 const captureDir = process.env.UI_POLISH_CAPTURE_DIR;
-if (!captureDir) throw new Error("UI_POLISH_CAPTURE_DIR must point to this task's evidence directory");
 const capturePrefix = process.env.UI_POLISH_CAPTURE_PREFIX ?? "base";
-fs.mkdirSync(captureDir, { recursive: true });
+if (captureDir) fs.mkdirSync(captureDir, { recursive: true });
+function capturePath(testInfo: TestInfo, filename: string): string {
+  return captureDir ? path.join(captureDir, filename) : testInfo.outputPath(filename);
+}
 const themes = ["light", "dark"] as const;
 const widths = [780, 390] as const;
 
@@ -126,9 +128,9 @@ test("Home setup clarity and bounded long copy at the reported breakpoints", asy
       expect.soft(setupDetailMetrics.scrollHeight, width + "px " + theme + ": long setup copy is available in its detail").toBeGreaterThan(setupDetailMetrics.clientHeight);
       const dark = await page.locator("html").evaluate((node) => node.classList.contains("dark"));
       expect.soft(dark, width + "px theme application").toBe(theme === "dark");
-      await page.screenshot({ path: path.join(captureDir, capturePrefix + "-home-" + width + "-" + theme + "-" + testInfo.repeatEachIndex + ".png"), fullPage: true });
+      await page.screenshot({ path: capturePath(testInfo, capturePrefix + "-home-" + width + "-" + theme + "-" + testInfo.repeatEachIndex + ".png"), fullPage: true });
       await setupDetail.evaluate((element) => { element.scrollTop = element.scrollHeight; });
-      await page.screenshot({ path: path.join(captureDir, capturePrefix + "-home-detail-bottom-" + width + "-" + theme + "-" + testInfo.repeatEachIndex + ".png"), fullPage: true });
+      await page.screenshot({ path: capturePath(testInfo, capturePrefix + "-home-detail-bottom-" + width + "-" + theme + "-" + testInfo.repeatEachIndex + ".png"), fullPage: true });
     }
   }
 });
@@ -203,13 +205,13 @@ test("Run summaries stay fixed while long finding copy, badges and errors remain
       expect.soft(tool.scrollWidth, width + "px: long tool label stays bounded").toBeLessThanOrEqual(tool.width + 1);
       const pageOverflow = await page.evaluate(() => document.documentElement.scrollWidth > document.documentElement.clientWidth);
       expect.soft(pageOverflow, width + "px " + theme + ": long run detail does not create horizontal page overflow").toBe(false);
-      await page.screenshot({ path: path.join(captureDir, capturePrefix + "-run-" + width + "-" + theme + "-" + testInfo.repeatEachIndex + ".png"), fullPage: true });
+      await page.screenshot({ path: capturePath(testInfo, capturePrefix + "-run-" + width + "-" + theme + "-" + testInfo.repeatEachIndex + ".png"), fullPage: true });
       await detail.getByTestId("evidence-chip-list").scrollIntoViewIfNeeded();
-      await page.screenshot({ path: path.join(captureDir, capturePrefix + "-run-badges-" + width + "-" + theme + "-" + testInfo.repeatEachIndex + ".png"), fullPage: true });
+      await page.screenshot({ path: capturePath(testInfo, capturePrefix + "-run-badges-" + width + "-" + theme + "-" + testInfo.repeatEachIndex + ".png"), fullPage: true });
       await detail.getByTestId("finding-tool").scrollIntoViewIfNeeded();
-      await page.screenshot({ path: path.join(captureDir, capturePrefix + "-run-tool-" + width + "-" + theme + "-" + testInfo.repeatEachIndex + ".png"), fullPage: true });
+      await page.screenshot({ path: capturePath(testInfo, capturePrefix + "-run-tool-" + width + "-" + theme + "-" + testInfo.repeatEachIndex + ".png"), fullPage: true });
       await detail.getByTestId("finding-error").scrollIntoViewIfNeeded();
-      await page.screenshot({ path: path.join(captureDir, capturePrefix + "-run-error-detail-" + width + "-" + theme + "-" + testInfo.repeatEachIndex + ".png"), fullPage: true });
+      await page.screenshot({ path: capturePath(testInfo, capturePrefix + "-run-error-detail-" + width + "-" + theme + "-" + testInfo.repeatEachIndex + ".png"), fullPage: true });
     }
   }
 });
@@ -231,7 +233,7 @@ test("Sidebar steering and theme controls explain their effect", async ({ page }
       await page.waitForTimeout(700);
       const themeTips = await page.getByRole("tooltip").allTextContents();
       expect.soft(themeTips.join(" "), width + "px " + theme + ": theme tooltip explains the monitor control").toMatch(/follows your device|system, light, and dark/i);
-      await page.screenshot({ path: path.join(captureDir, capturePrefix + "-sidebar-tooltip-" + width + "-" + theme + "-" + testInfo.repeatEachIndex + ".png"), fullPage: true });
+      await page.screenshot({ path: capturePath(testInfo, capturePrefix + "-sidebar-tooltip-" + width + "-" + theme + "-" + testInfo.repeatEachIndex + ".png"), fullPage: true });
     }
   }
 });
