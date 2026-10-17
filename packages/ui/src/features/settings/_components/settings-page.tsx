@@ -53,12 +53,7 @@ export function SettingsPage({ status, tab: raw }: { status?: Status; tab?: stri
         ) : tab === "general" ? (
           <GeneralSection status={status} />
         ) : tab === "projects" ? (
-          <ProjectsSection
-            streamClients={status.steering.stream_clients ?? status.steering.hooks_connected}
-            lastSeenMs={status.steering.last_seen_ms}
-            steerPython={status.install?.steer_python}
-            steerTs={status.install?.steer_ts}
-          />
+          <ProjectsSection steerPython={status.install?.steer_python} steerTs={status.install?.steer_ts} />
         ) : tab === "models" ? (
           <LlmSection status={status} />
         ) : tab === "decisions" ? (

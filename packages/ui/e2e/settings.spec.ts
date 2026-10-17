@@ -49,11 +49,11 @@ test.describe("settings", () => {
     expect(s.config.retention.days).toBe(21);
   });
 
-  test("Projects describes no hook contact observed since this server started", async ({ page }, testInfo) => {
+  test("Projects shows hook setup without a health assessment", async ({ page }, testInfo) => {
     await fixtureSteeringStatus(page, null);
     await open(page, "settings/projects");
-    await expect(page.getByText("Steering hook · 0 SSE stream clients", { exact: true })).toBeVisible();
-    await expect(page.getByText(/Last successful hook contact since this server started: no contact observed\./)).toBeVisible();
+    await expect(page.getByText("Steering hook", { exact: true })).toBeVisible();
+    await expect(page.getByText(/Last successful hook contact|SSE stream|connected now/)).toHaveCount(0);
     await expect(page.getByText(/connected now/)).toHaveCount(0);
 
     const screenshotDir = process.env.NEATROOTS_HOOK_HEALTH_SCREENSHOT_DIR;
@@ -75,18 +75,18 @@ test.describe("settings", () => {
     }
   });
 
-  test("Projects renders a recent hook contact from this server run", async ({ page }) => {
+  test("Projects keeps contact telemetry out of hook setup", async ({ page }) => {
     await fixtureSteeringStatus(page, Date.now() - 120_000);
     await open(page, "settings/projects");
-    await expect(page.getByText("Steering hook · 0 SSE stream clients", { exact: true })).toBeVisible();
-    await expect(page.getByText(/Last successful hook contact since this server started: 2m ago\./)).toBeVisible();
+    await expect(page.getByText("Steering hook", { exact: true })).toBeVisible();
+    await expect(page.getByText(/Last successful hook contact|SSE stream|connected now/)).toHaveCount(0);
   });
 
-  test("Projects handles legacy status without contact fields", async ({ page }) => {
+  test("Projects shows hook setup with legacy status", async ({ page }) => {
     await fixtureSteeringStatus(page, "legacy");
     await open(page, "settings/projects");
-    await expect(page.getByText("Steering hook · 2 SSE stream clients", { exact: true })).toBeVisible();
-    await expect(page.getByText(/Last successful hook contact since this server started: unknown\./)).toBeVisible();
+    await expect(page.getByText("Steering hook", { exact: true })).toBeVisible();
+    await expect(page.getByText(/Last successful hook contact|SSE stream|connected now/)).toHaveCount(0);
   });
 
   test("Projects sets up a replay command for a project", async ({ page }) => {

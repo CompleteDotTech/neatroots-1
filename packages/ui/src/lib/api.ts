@@ -297,14 +297,7 @@ export interface Status {
     pendingJobs: number;
   } | null;
   tier: { tier: string; memoryGb: number; description: string; platform: string };
-  steering: {
-    enabled: boolean;
-    /** Legacy alias for stream_clients; retained for status-response compatibility. */
-    hooks_connected: number;
-    stream_clients?: number;
-    /** Process-local; resets on restart. Null means no contact observed since server start. */
-    last_seen_ms?: number | null;
-  };
+  steering: { enabled: boolean; hooks_connected: number };
   mcp?: { last_seen_ms: number | null };
   install?: { mode: "bundle" | "source" | "other"; root: string | null; steer_python: string | null; steer_ts: string | null; examples?: string | null };
   cloud: { endpoint: string; has_key: boolean; has_token?: boolean; project_id?: string | null };
