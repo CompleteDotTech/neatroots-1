@@ -203,17 +203,24 @@ describe("search index run ids", () => {
     st.db.prepare("DELETE FROM meta WHERE key = 'search_index'").run();
     const reindexed = () => new Promise<[number, boolean]>((resolve) => st.reindexSearch((n, ok) => resolve([n, ok])));
     const prepare = st.db.prepare.bind(st.db);
+    const failing = async (fails: (sql: string) => boolean) => {
+      st.db.prepare = ((sql: string) => {
+        if (fails(sql)) throw new Error("database is locked");
+        return prepare(sql);
+      }) as typeof st.db.prepare;
+      try {
+        return await reindexed();
+      } finally {
+        st.db.prepare = prepare;
+      }
+    };
     let writes = 0;
-    st.db.prepare = ((sql: string) => {
-      if (sql.startsWith("INSERT OR REPLACE INTO span_fts_ids") && ++writes === 3) throw new Error("database is locked");
-      return prepare(sql);
-    }) as typeof st.db.prepare;
-    try {
-      expect((await reindexed())[1]).toBe(false);
-    } finally {
-      st.db.prepare = prepare;
-    }
+    expect((await failing((sql) => sql.startsWith("INSERT OR REPLACE INTO span_fts_ids") && ++writes === 3))[1]).toBe(false);
     // The failed chunk rolled back as a whole, so the run ids still match the index.
+    idsMatchIndex(st);
+    expect(st.getMeta("search_index")).toBeUndefined();
+    // Every chunk committed but recording that it finished failed: reported, not thrown.
+    expect(await failing((sql) => sql.startsWith("INSERT OR REPLACE INTO meta"))).toEqual([6, false]);
     idsMatchIndex(st);
     expect(st.getMeta("search_index")).toBeUndefined();
     expect(await reindexed()).toEqual([6, true]);

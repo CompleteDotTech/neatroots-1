@@ -1495,21 +1495,20 @@ export class Store {
     });
     const step = () => {
       if (!this.db.open) return;
-      let rows: { seq: number; trace_id: string; span_id: string }[];
       try {
-        rows = this.db.prepare("SELECT seq, trace_id, span_id FROM spans WHERE seq > ? ORDER BY seq LIMIT 300").all(after) as typeof rows;
+        const rows = this.db.prepare("SELECT seq, trace_id, span_id FROM spans WHERE seq > ? ORDER BY seq LIMIT 300").all(after) as { seq: number; trace_id: string; span_id: string }[];
         chunk(rows);
+        if (rows.length) {
+          after = rows[rows.length - 1].seq;
+          setImmediate(step);
+          return;
+        }
+        this.setMeta("search_index", String(SEARCH_INDEX_VERSION));
       } catch {
-        // A busy or failing database: stop (the chunk rolled back), and start over at the next start.
+        // A busy or failing database: stop (a failed chunk rolls back), and start over at the next start.
         onDone?.(n, false);
         return;
       }
-      if (rows.length) {
-        after = rows[rows.length - 1].seq;
-        setImmediate(step);
-        return;
-      }
-      this.setMeta("search_index", String(SEARCH_INDEX_VERSION));
       onDone?.(n, true);
     };
     setImmediate(step);
