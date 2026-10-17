@@ -114,6 +114,37 @@ function matchTexts(v: unknown): string[] {
 export function evaluateRule(check: RuleCheck, t: TraceSnapshot, atEnd: boolean, fresh?: ReadonlySet<string>, untrusted = false): RuleHit | null {
   const r = check.rule;
   switch (r.type) {
+    case "cache_reuse": {
+      // Different providers/models have separate cache lifecycles. Exclude each group's
+      // first chronological call even when its counts are missing (never its first arrival).
+      const groups = new Map<string, SpanInfo[]>();
+      const calls = t.spans.filter((s) => s.kind === "LLM")
+        .sort((a, b) => a.startMs - b.startMs || a.id.localeCompare(b.id));
+      for (const s of calls) {
+        const key = JSON.stringify([s.provider ?? "", s.model ?? ""]);
+        const group = groups.get(key) ?? [];
+        group.push(s);
+        groups.set(key, group);
+      }
+      const evidence: SpanInfo[] = [];
+      let writes = 0, reads = 0;
+      for (const group of groups.values()) {
+        const measured = group.filter((s) => s.cacheReadTokens !== undefined && s.cacheWriteTokens !== undefined);
+        if (measured.length < r.min_calls) continue;
+        const later = group.slice(1).filter((s) => s.cacheReadTokens !== undefined && s.cacheWriteTokens !== undefined);
+        const write = later.reduce((sum, s) => sum + s.cacheWriteTokens!, 0);
+        const read = later.reduce((sum, s) => sum + s.cacheReadTokens!, 0);
+        const missed = later.filter((s) => s.cacheWriteTokens! > 0 && s.cacheReadTokens === 0);
+        if (write <= read || !missed.length) continue;
+        writes += write;
+        reads += read;
+        evidence.push(...missed);
+      }
+      if (!evidence.length) return null;
+      evidence.sort((a, b) => a.startMs - b.startMs || a.id.localeCompare(b.id));
+      return { firing: true, evidenceSpanIds: evidence.map((s) => s.id),
+        params: { cache_write: String(writes), cache_read: String(reads) } };
+    }
     case "repeat": {
       const spans = selectSpans(t.spans, r.span).sort((a, b) => a.endMs - b.endMs);
       if (spans.length < r.at_least) return null;

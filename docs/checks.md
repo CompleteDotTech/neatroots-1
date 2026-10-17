@@ -127,3 +127,24 @@ seconds). With no local LLM, Laya answers everything. Settings → Models shows 
 When the local LLM stands in for the decision model, span-level questions are asked only about the
 newest waiting span (at most four per check per run), identical questions are answered from a cache,
 and note-writing jumps the LLM queue. With Laya or Jev every span is asked.
+
+### Prompt-cache reuse
+
+The library's `cache-not-reused` rule uses `type: cache_reuse` with `min_calls: 3`
+(default, minimum 3). Within each provider/model group, at least `min_calls` LLM calls
+must report both valid cache counts. The first chronological call is warmup and excluded
+from the comparison. Later measured writes must exceed reads, and evidence includes only
+later calls with positive writes and explicitly zero reads. Missing counts are unknown,
+not zero; read-only OpenAI telemetry and runs without caching stay quiet.
+
+Counts come from `neatlogs.llm.token_count.cache_read` / `cache_write` and GenAI
+`gen_ai.usage.cache_read.input_tokens` / `cache_creation.input_tokens` (also the
+underscore `cache_read_input_tokens`, `cache_creation_input_tokens`, and
+`cache_write_input_tokens` variants). Counts must be nonnegative safe integers.
+These normalized fields do not alter prompt or total tokens or stored attributes.
+
+Ordering uses call start time, then span ID for ties, independent of ingestion order.
+Separate providers/models get separate warmups so one model's reads cannot hide another's
+writes. This is a diagnostic heuristic: calls to independent cache routes or different
+prompts within the same provider/model may intentionally write fresh caches. Inspect the
+evidence before changing the agent; the rule cannot infer cache identity from token counts.
