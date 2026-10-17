@@ -186,6 +186,41 @@ describe("search index run ids", () => {
     idsMatchIndex(st);
   });
 
+  it("look up a page's snippets with one match scan, not one match per span", () => {
+    const st = trackedStore(dataDir());
+    const t = run(st, "invoice");
+    const sql = prepared(st, () => st.searchSpans("invoice", 10, [t])).find((q) => q.includes("snippet(span_fts"))!;
+    const plan = (st.db.prepare(`EXPLAIN QUERY PLAN ${sql}`).all('"invoice"', t, 10) as { detail: string }[]).map((r) => r.detail).join(" ");
+    // After the colon FTS5 lists what it was given: M is the match, = a rowid it would look up one by one.
+    expect(plan).toMatch(/span_fts VIRTUAL TABLE INDEX \d+:M/);
+    expect(st.searchSpans("invoice", 10, [t]).map((h) => h.trace_id)).toEqual([t]);
+  });
+
+  it("change with the index in each re-index chunk, which stops cleanly on an error", async () => {
+    const st = trackedStore(dataDir());
+    for (let i = 0; i < 3; i++) run(st, `invoice ${i}`);
+    // As a store from before search covered whole values: no version marker, so it is re-indexed.
+    st.db.prepare("DELETE FROM meta WHERE key = 'search_index'").run();
+    const reindexed = () => new Promise<[number, boolean]>((resolve) => st.reindexSearch((n, ok) => resolve([n, ok])));
+    const prepare = st.db.prepare.bind(st.db);
+    let writes = 0;
+    st.db.prepare = ((sql: string) => {
+      if (sql.startsWith("INSERT OR REPLACE INTO span_fts_ids") && ++writes === 3) throw new Error("database is locked");
+      return prepare(sql);
+    }) as typeof st.db.prepare;
+    try {
+      expect((await reindexed())[1]).toBe(false);
+    } finally {
+      st.db.prepare = prepare;
+    }
+    // The failed chunk rolled back as a whole, so the run ids still match the index.
+    idsMatchIndex(st);
+    expect(st.getMeta("search_index")).toBeUndefined();
+    expect(await reindexed()).toEqual([6, true]);
+    idsMatchIndex(st);
+    expect(st.searchSpans("invoice").length).toBe(3);
+  });
+
   it("keep ingest, search and deletes from reading every index row", async () => {
     // Filtering span_fts on trace_id or span_id (unindexed columns) loads every row's text.
     const scan = /FROM span_fts WHERE trace_id|SELECT trace_id(, span_id)? FROM span_fts |MATCH \? AND trace_id/;

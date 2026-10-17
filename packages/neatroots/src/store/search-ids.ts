@@ -50,7 +50,9 @@ export class SearchIds {
   /** A condition on span_fts rows: they belong to one of `n` runs, given as parameters. */
   inRuns(n: number): string {
     const list = Array(n).fill("?").join(",");
-    return this.ready ? `rowid IN (SELECT id FROM span_fts_ids WHERE trace_id IN (${list}))` : `trace_id IN (${list})`;
+    // +rowid keeps the list out of FTS5, which would otherwise run the MATCH once per listed row
+    // (slow for long runs); as a plain filter it is checked against each match's rowid instead.
+    return this.ready ? `+rowid IN (SELECT id FROM span_fts_ids WHERE trace_id IN (${list}))` : `trace_id IN (${list})`;
   }
 
   /** Records the run and span of a span_fts row just inserted. A rowid can be reused after a delete. */
@@ -82,8 +84,13 @@ export class SearchIds {
       return;
     }
     if (this.rebuilding) return;
+    try {
+      this.db.prepare("DELETE FROM span_fts_ids").run();
+    } catch {
+      setImmediate(() => onDone?.(0, false));
+      return;
+    }
     this.rebuilding = true;
-    this.db.prepare("DELETE FROM span_fts_ids").run();
     const read = this.db.prepare("SELECT rowid AS id, trace_id, span_id FROM span_fts WHERE rowid > ? ORDER BY rowid LIMIT ?");
     const insert = this.db.prepare("INSERT OR IGNORE INTO span_fts_ids (id, trace_id, span_id) VALUES (@id, @trace_id, @span_id)");
     const fill = this.db.transaction((rows: Row[]) => {
