@@ -54,6 +54,19 @@ test("labels stored root output previews", async ({ page }) => {
   await expect(page.getByText("Only the stored preview is available; the full root output was not recorded.", { exact: true })).toBeVisible();
 });
 
+test("keeps run-picker errors visible with paginated run searches", async ({ page }) => {
+  await page.route("**/api/runs?*", async (route) => {
+    if (new URL(route.request().url()).searchParams.get("q") === "fixture-unavailable") {
+      await route.fulfill({ status: 503, json: { error: "fixture search unavailable" } });
+    } else await route.continue();
+  });
+  await open(page, `compare?a=${state().supportRun}&b=${state().researchRun}`);
+  await expect(page.getByTestId("metric-tokens")).toBeVisible();
+  await page.getByRole("textbox", { name: "Search original runs", exact: true }).fill("fixture-unavailable");
+  await expect(page.getByText("Couldn't load runs. Try searching again.", { exact: true })).toBeVisible();
+  await expect(page.getByTestId("metric-tokens")).toBeVisible();
+});
+
 for (const mode of ["light", "dark", "mobile"] as const) {
   test(`comparison layout in ${mode}`, async ({ page }, info) => {
     const errors = watchErrors(page);
