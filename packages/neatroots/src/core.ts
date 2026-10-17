@@ -68,6 +68,7 @@ export class Roots {
     this.replays = new Replays(this);
     this.chats = new AgentChats(this);
     this.store.reindexSearch((n) => n && log.info(`search now covers whole inputs and outputs (${n} spans re-indexed)`));
+    this.store.rebuildSearchIds((n, ready) => (ready ? n && log.info(`search index ready for fast lookups (${n} rows)`) : log.warn("search index lookups couldn't be prepared; search works but is slower on a large store")));
     if (!opts.noEngine) {
       const engine = new Engine(this, this.llm, this.decisions, this.checks, this.steering);
       this.engine = engine;
