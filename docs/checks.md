@@ -90,7 +90,9 @@ is the expected level, not necessarily a whole number.
   Plans are cached per workflow and redone when new tools appear.
 - **You**: describe a concern in the app (Checks → New check) and the LLM drafts the question; preview
   it on recent runs before saving.
-- **Coding agents**: `create_check` and `preview_check` over MCP.
+- **Coding agents**: `create_check` and `preview_check` over MCP. A coding agent can save `flag` rules and
+  questions, but not halt rules: it can't create one, turn a check into one, or change yours. Switch a
+  rule to `action: halt` yourself in the app or CLI.
 
 ## Findings
 
