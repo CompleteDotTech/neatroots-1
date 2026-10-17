@@ -25,6 +25,10 @@ export interface ForwardPreview {
  * without loss, redacted first, closed with the public neatlogs.trace.complete marker, and
  * carry neatroots findings as neatroots.* attributes.
  */
+const isRedirect = (res: Response) => res.status >= 300 && res.status < 400;
+const redirectError = (res: Response) =>
+  `the endpoint redirected to ${res.headers.get("location") ?? "another URL"}; neatroots doesn't follow redirects with your API key, so set the endpoint to the final URL`;
+
 /** How many times a completion marker is tried, and the first backoff (doubling) between tries. */
 const MARKER_ATTEMPTS = 3;
 const MARKER_BACKOFF_MS = 500;
@@ -201,6 +205,8 @@ export class Relay {
         method: "POST",
         headers: { "content-type": "application/x-protobuf", "content-encoding": "gzip", "x-api-key": key, "user-agent": `neatroots/${VERSION}` },
         body: gz,
+        // A redirect would carry x-api-key to another host (fetch drops only Authorization), so it's an error.
+        redirect: "manual",
         signal: AbortSignal.timeout(30_000),
       });
       return { res, bytes: gz.length };
@@ -215,7 +221,7 @@ export class Relay {
       const a = await send(enc.main);
       bytes += a.bytes;
       if (!a.res.ok) {
-        const text = (await a.res.text().catch(() => "")).slice(0, 300);
+        const text = isRedirect(a.res) ? redirectError(a.res) : (await a.res.text().catch(() => "")).slice(0, 300);
         return this.roots.store.insertForward({ ...base, status: "error", http_status: a.res.status, span_count: enc.spanCount, bytes, redactions: enc.redactions, error: `ingest returned HTTP ${a.res.status}${text ? `: ${text}` : ""}` });
       }
       accepted = a.res.status;
@@ -233,7 +239,7 @@ export class Relay {
               why = "";
               break;
             }
-            why = `HTTP ${b.res.status}`;
+            why = isRedirect(b.res) ? `HTTP ${b.res.status}: ${redirectError(b.res)}` : `HTTP ${b.res.status}`;
             if (b.res.status !== 408 && b.res.status < 500) break;
           } catch (err) {
             why = (err as Error).message;

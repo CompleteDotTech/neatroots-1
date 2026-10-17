@@ -620,7 +620,11 @@ export class LlmClient {
   }
 
   private redactFor(target: Transport): (s: string) => string {
-    if (target === this.local) return (s) => s;
+    return target === this.local ? (s) => s : this.redactRemote();
+  }
+
+  /** What text sent off the machine goes through (llm.external.redact); Jev cloud uses it too. */
+  redactRemote(): (s: string) => string {
     const mode = this.cfg.external.redact;
     if (mode === "off") return (s) => s;
     const rules: RedactionRule[] =

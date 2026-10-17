@@ -43,6 +43,10 @@ Neatlogs Cloud).
 
 The project API key is stored in the macOS Keychain (`neatroots cloud login`), never in the database.
 
+Requests that carry the project API key or the service-account token don't follow HTTP redirects:
+a redirect is logged as a failed send or import, so the key never reaches another host. If your
+endpoint moved, set it to the final URL.
+
 ## Importing
 
 Importing needs a Neatlogs service-account token (see the
