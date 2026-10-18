@@ -352,7 +352,7 @@ export interface LlmInfo {
 
 export type InsightWindow = "24h" | "7d" | "30d";
 
-export interface InsightTotals extends CostEstimate {
+export interface InsightPeriodTotals {
   runs: number;
   failed: number;
   with_problems: number;
@@ -362,6 +362,8 @@ export interface InsightTotals extends CostEstimate {
   p50_ms: number | null;
   p95_ms: number | null;
 }
+
+export interface InsightTotals extends InsightPeriodTotals, CostEstimate {}
 
 export interface Digest {
   window: InsightWindow;
@@ -375,7 +377,7 @@ export interface Digest {
 export interface Insights {
   window: { key: InsightWindow; from_ms: number; to_ms: number; bucket_ms: number };
   totals: InsightTotals;
-  previous: InsightTotals;
+  previous: InsightPeriodTotals;
   buckets: { start_ms: number; runs: number; failed: number; with_problems: number }[];
   problems: { check_id: string; title: string; kind: string; runs: number; prev_runs: number; dismissed: number; last_ms: number; example_trace_id: string; projects: string[] }[];
   tools: { name: string; calls: number; failures: number; empty: number; runs: number; prev_calls: number; prev_failures: number; p50_ms: number | null }[];

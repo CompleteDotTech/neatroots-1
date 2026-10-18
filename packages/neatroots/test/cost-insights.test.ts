@@ -1,8 +1,9 @@
 import fs from "node:fs";
 import path from "node:path";
-import { afterEach, expect, it } from "vitest";
+import { afterEach, expect, it, vi } from "vitest";
 import { computeInsights } from "../src/store/insights.js";
 import { runCost } from "../src/store/costs.js";
+import * as costs from "../src/store/costs.js";
 import { runDetail } from "../src/server/api.js";
 import { defaultConfig, loadConfig, saveConfig } from "../src/config.js";
 import { batch, closeTrackedStores, hex, makeRoots, s, span, tmpHome, trackedStore } from "./helpers.js";
@@ -67,4 +68,26 @@ it("keeps missing-LLM-usage runs visible in mixed projects and periods", () => {
   expect(i.projects.find(p=>p.name==="B")).toMatchObject({missing_usage_runs:1, cost_usd:null});
   st.db.prepare("UPDATE runs SET started_ms=? WHERE trace_id=?").run(Date.now()-10*86400000,other);
   i=computeInsights(st.db,"7d",[]);expect(i.totals.missing_usage_runs).toBe(1);
+});
+
+
+it("prices only the current window and preserves cost-free previous metrics", () => {
+  const home=tmpHome();homes.push(home);const st=trackedStore(path.join(home,"data"));
+  const current=hex(16), previous=hex(16), now=Date.now();
+  st.ingest([batch([call(current)],"A"),batch([call(previous)],"A")]);
+  const start=now-10*86400000;
+  st.db.prepare("UPDATE runs SET started_ms=?, ended_ms=?, status='error' WHERE trace_id=?").run(start,start+1234,previous);
+  st.insertFinding({trace_id:previous,check_id:"previous-problem",check_kind:"question",title:"Previous problem",status:"raised",probability:.9,evidence_span_ids:[],detail:{},model:null,triage_score:3,explanation_id:null});
+  const row=st.db.prepare("SELECT attributes FROM spans WHERE trace_id=?").get(previous) as {attributes:string};
+  const previousRaw=JSON.stringify([...JSON.parse(row.attributes),s("review.previous.only","sentinel")]);
+  st.db.prepare("UPDATE spans SET attributes=? WHERE trace_id=?").run(previousRaw,previous);
+  const price=vi.spyOn(costs,"readCosts"), parse=vi.spyOn(JSON,"parse");
+  try {
+    const result=computeInsights(st.db,"7d",[],now);
+    expect(price).toHaveBeenCalledTimes(1);
+    expect(price.mock.calls[0][2]).toEqual({from:now-7*86400000,to:now+5*60000});
+    expect(parse.mock.calls.some(([raw])=>raw===previousRaw)).toBe(false);
+    expect(result.totals.cost_usd).toBeCloseTo(.00056);
+    expect(result.previous).toEqual({runs:1,failed:1,with_problems:1,tokens:1100,llm_calls:1,tool_calls:0,p50_ms:1234,p95_ms:1234});
+  } finally {price.mockRestore();parse.mockRestore();}
 });

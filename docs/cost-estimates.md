@@ -40,3 +40,5 @@ pricing:
 ```
 
 Rates are USD per million tokens; finite nonnegative numeric rates only (fractional prices are valid). `inputMode` is required: `includes-cache` subtracts cached tokens before normal input pricing, `excludes-cache` adds them separately. Exact provider/model overrides take precedence. Duplicate keys and malformed rates are rejected when loading/saving config; invalid values passed directly to pricing cannot create negative/NaN/free estimates. No assumption is made about provider aliases. Configure the provider exactly as reported by your instrumentation. Cache-rate work is independent of PR368: stored token semantics are unchanged.
+
+Only the selected current window is priced by the insights API. Its `previous` comparison contains run, problem, token and duration metrics, with no cost fields; historical runs are priced when included in the selected window or read individually.

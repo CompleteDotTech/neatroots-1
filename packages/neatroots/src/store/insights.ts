@@ -25,7 +25,7 @@ export interface CheckInfo {
   enabled: boolean;
 }
 
-export interface Totals extends CostEstimate {
+export interface PeriodTotals {
   runs: number;
   failed: number;
   with_problems: number;
@@ -35,6 +35,8 @@ export interface Totals extends CostEstimate {
   p50_ms: number | null;
   p95_ms: number | null;
 }
+
+export interface Totals extends PeriodTotals, CostEstimate {}
 
 export interface ProblemAgg {
   check_id: string;
@@ -82,7 +84,7 @@ export interface ProjectAgg extends CostEstimate {
 export interface Insights {
   window: { key: WindowKey; from_ms: number; to_ms: number; bucket_ms: number };
   totals: Totals;
-  previous: Totals;
+  previous: PeriodTotals;
   buckets: { start_ms: number; runs: number; failed: number; with_problems: number }[];
   problems: ProblemAgg[];
   tools: ToolAgg[];
@@ -125,7 +127,7 @@ const RUNS_IN = `SELECT trace_id FROM runs WHERE doctor = 0 AND COALESCE(started
 /** A problem counts unless the user dismissed it, the check could not run, or it went quiet. */
 const IS_PROBLEM = (f: { status: string }) => f.status !== "dismissed" && f.status !== "failed" && f.status !== "quiet";
 
-function slice(db: Database.Database, from: number, to: number, prices: Price[]) {
+function slice(db: Database.Database, from: number, to: number) {
   const p = { from, to };
   const runs = db
     .prepare(
@@ -141,9 +143,7 @@ function slice(db: Database.Database, from: number, to: number, prices: Price[])
     .all(p) as FindingRec[];
   const problemRuns = new Set(findings.filter(IS_PROBLEM).map((f) => f.trace_id));
   const done = runs.filter((r) => r.status !== "running");
-  const costs = readCosts(db, "r.doctor=0 AND COALESCE(r.started_ms,r.received_ms)>=@from AND COALESCE(r.started_ms,r.received_ms)<@to", p, prices);
-  const totals: Totals = {
-    ...costs.total,
+  const totals: PeriodTotals = {
     runs: runs.length,
     failed: runs.filter((r) => r.status === "error" || r.status === "interrupted").length,
     with_problems: runs.filter((r) => problemRuns.has(r.trace_id)).length,
@@ -153,7 +153,7 @@ function slice(db: Database.Database, from: number, to: number, prices: Price[])
     p50_ms: percentile(done.flatMap((r) => (r.dur !== null ? [r.dur] : [])), 0.5),
     p95_ms: percentile(done.flatMap((r) => (r.dur !== null ? [r.dur] : [])), 0.95),
   };
-  return { runs, findings, problemRuns, totals, costs };
+  return { runs, findings, problemRuns, totals };
 }
 
 function tools(db: Database.Database, from: number, to: number) {
@@ -205,8 +205,9 @@ export function computeInsights(db: Database.Database, key: WindowKey, checks: C
   const prevFrom = from - w.ms;
   // Span times come from the agent's clock; allow a little skew past "now".
   const until = to + SKEW_MS;
-  const cur = slice(db, from, until, prices);
-  const prev = slice(db, prevFrom, from, prices);
+  const cur = slice(db, from, until);
+  const prev = slice(db, prevFrom, from);
+  const costs = readCosts(db, "r.doctor=0 AND COALESCE(r.started_ms,r.received_ms)>=@from AND COALESCE(r.started_ms,r.received_ms)<@to", { from, to: until }, prices);
   const titles = new Map(checks.map((c) => [c.id, c]));
 
   // Activity over time.
@@ -288,7 +289,7 @@ export function computeInsights(db: Database.Database, key: WindowKey, checks: C
     const a = projects.get(r.project) ?? { ...emptyCost(), tokens: 0, name: r.project, runs: 0, failed: 0, with_problems: 0, prev_runs: 0, prev_with_problems: 0, last_ms: 0, top_problem: null };
     a.runs++;
     a.tokens += r.total_tokens ?? 0;
-    addCost(a, cur.costs.runs.get(r.trace_id) ?? emptyCost());
+    addCost(a, costs.runs.get(r.trace_id) ?? emptyCost());
     if (r.status === "error" || r.status === "interrupted") a.failed++;
     if (cur.problemRuns.has(r.trace_id)) a.with_problems++;
     a.last_ms = Math.max(a.last_ms, r.t);
@@ -327,12 +328,12 @@ export function computeInsights(db: Database.Database, key: WindowKey, checks: C
 
   return {
     window: { key, from_ms: from, to_ms: to, bucket_ms: w.bucketMs },
-    totals: cur.totals,
+    totals: { ...cur.totals, ...costs.total },
     previous: prev.totals,
     buckets,
     problems,
     tools: toolAggs,
-    models: models(db, from, until).map((m) => ({ ...m, ...(cur.costs.models.get(m.name) ?? emptyCost()) })),
+    models: models(db, from, until).map((m) => ({ ...m, ...(costs.models.get(m.name) ?? emptyCost()) })),
     projects: [...projects.values()].sort((a, b) => b.runs - a.runs),
     passing,
     gone,
