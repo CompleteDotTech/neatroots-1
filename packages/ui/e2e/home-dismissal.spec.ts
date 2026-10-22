@@ -54,6 +54,8 @@ for (const theme of ["light", "dark"] as const) {
       await expect(row(page, "alpha").getByRole("link")).toHaveAttribute("href", /&project=alpha$/);
       // Problem rows keep the fixed height of Home's other rows.
       expect(await row(page, "alpha").evaluate((e) => e.getBoundingClientRect().height)).toBe(56);
+      // The panel fits the viewport, so the button isn't clipped off a phone's screen.
+      expect(await row(page, "alpha").getByRole("button").evaluate((e) => e.getBoundingClientRect().right)).toBeLessThanOrEqual(width);
       await row(page, "alpha").scrollIntoViewIfNeeded();
       await page.screenshot({ path: info.outputPath(`home-${theme}-${width}-before.png`), fullPage: true });
       const button = row(page, "alpha").getByRole("button");

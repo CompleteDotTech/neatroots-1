@@ -146,7 +146,7 @@ function Row({ item, tone }: { item: Item; tone: "bad" | "good" }) {
 function Column({ title, groups, tone, empty }: { title: string; groups: Group[]; tone: "bad" | "good"; empty: string }) {
   const total = groups.reduce((a, g) => a + g.items.length, 0);
   return (
-    <Panel className="h-[26rem] p-0">
+    <Panel className="h-[26rem] min-w-0 p-0">
       <PanelHeader
         className="mb-0 px-5 pt-4"
         title={title}
