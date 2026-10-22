@@ -52,6 +52,8 @@ for (const theme of ["light", "dark"] as const) {
       await expect(row(page, "alpha")).toContainText("1 of 3 dismissals until this check goes quiet here");
       await expect(row(page, "beta")).toContainText("0 of 3 dismissals");
       await expect(row(page, "alpha").getByRole("link")).toHaveAttribute("href", /&project=alpha$/);
+      // Problem rows keep the fixed height of Home's other rows.
+      expect(await row(page, "alpha").evaluate((e) => e.getBoundingClientRect().height)).toBe(56);
       await row(page, "alpha").scrollIntoViewIfNeeded();
       await page.screenshot({ path: info.outputPath(`home-${theme}-${width}-before.png`), fullPage: true });
       const button = row(page, "alpha").getByRole("button");
@@ -98,7 +100,8 @@ test("shows a stale-target error, refreshes identity, and requires a new click",
   await open(page, "home");
   await row(page, "alpha").getByRole("button").click();
   await expect(row(page, "alpha").getByRole("alert")).toContainText("Review the refreshed Home row and try again.");
-  await expect(row(page, "alpha")).toContainText("1 of 3 dismissals");
+  // The error takes the detail line; the progress stays in the row link's title.
+  await expect(row(page, "alpha").getByRole("link")).toHaveAttribute("title", /1 of 3 dismissals/);
   expect(requests).toHaveLength(1);
   await row(page, "alpha").getByRole("button").click();
   await expect(row(page, "alpha")).toContainText("2 of 3 dismissals");
@@ -118,7 +121,7 @@ test("keeps failures actionable and handles no open findings and empty problem l
   await row(page, "alpha").getByRole("button").click();
   await expect(row(page, "alpha").getByRole("alert")).toHaveText("Could not dismiss this finding. Review the refreshed Home row and try again.");
   await expect(row(page, "alpha").getByRole("button")).toBeEnabled();
-  await expect(row(page, "alpha")).toContainText("1 of 3 dismissals");
+  await expect(row(page, "alpha").getByRole("link")).toHaveAttribute("title", /1 of 3 dismissals/);
   expect(requests).toBe(1);
   data.problems = [];
   await page.reload();
@@ -164,7 +167,7 @@ for (const theme of ["light", "dark"] as const) {
       await expect(alpha.getByRole("alert")).toHaveText("Could not dismiss this finding. Review the refreshed Home row and try again.");
       await expect(alpha.getByRole("button")).toBeEnabled();
       await expect(page.locator("body")).not.toContainText(privateMarker);
-      await expect(alpha).toContainText("1 of 3 dismissals");
+      await expect(alpha.getByRole("link")).toHaveAttribute("title", /1 of 3 dismissals/);
       expect(requests).toBe(1);
       await alpha.scrollIntoViewIfNeeded();
       await page.screenshot({ path: info.outputPath(`safe-error-${theme}-${width}.png`), fullPage: true });
