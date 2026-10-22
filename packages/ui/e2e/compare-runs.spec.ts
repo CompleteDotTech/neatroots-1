@@ -12,6 +12,8 @@ test("selects two runs, shows changes, swaps and survives reload", async ({ page
   await expect(page.getByTestId("metric-tokens")).toContainText("Not recorded");
   await expect(page.getByTestId("metric-tokens")).toContainText("Not available");
   await expect(page.getByTestId("metric-duration")).toContainText(" ms");
+  // Whole milliseconds, not the fractional span timestamps' difference.
+  await expect(page.getByTestId("metric-duration")).not.toContainText(/\d\.\d+ ms/);
   await expect(page.getByRole("list", { name: "Original tool sequence" })).toContainText("lookup_order");
   await expect(page.getByRole("list", { name: "Comparison tool sequence" })).toContainText("web_search");
   await expect(page.getByTestId("output-0")).toContainText("payments key");

@@ -49,8 +49,9 @@ function RunPicker({ label, value, onChange, selected }: { label: string; value:
 }
 
 function Metric({ label, a, b, unit = "" }: { label: string; a: number | null; b: number | null; unit?: string }) {
-  const format = (n: number | null) => n === null ? "Not recorded" : `${n.toLocaleString()}${unit}`;
-  const delta = a === null || b === null ? null : b - a;
+  // Durations come from fractional span timestamps; show whole numbers.
+  const format = (n: number | null) => n === null ? "Not recorded" : `${Math.round(n).toLocaleString()}${unit}`;
+  const delta = a === null || b === null ? null : Math.round(b) - Math.round(a);
   return <Panel data-testid={`metric-${label.toLowerCase().replaceAll(" ", "-")}`}>
     <PanelHeader title={label} />
     <div className="grid grid-cols-2 gap-3 text-sm tabular-nums">
