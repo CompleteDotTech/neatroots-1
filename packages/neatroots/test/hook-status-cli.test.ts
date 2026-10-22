@@ -26,9 +26,8 @@ for (const mode of ["off", "advisory"] as const) {
           env: { ...process.env, NEATROOTS_HOME: tb.roots.home },
         });
       const status = (await run("status")).stdout;
-      expect(status).toContain("steering hook · last contact since server start");
       expect(status).not.toMatch(/SSE|hooks connected|stream clients/);
-      expect(status).toContain(contact === null ? "no contact observed" : contact === "legacy" ? "unknown" : "2m ago");
+      expect(status).toContain(contact === null ? "· no hook contact since the server started" : contact === "legacy" ? "· hook last contact unknown" : "· hook last contact 2m ago");
       const doctor = (await run("doctor")).stdout;
       expect(doctor).toContain("trace round trip through /v1/traces and the doctor read-back");
       // Reduced scope: doctor does not assess optional steering at all.
