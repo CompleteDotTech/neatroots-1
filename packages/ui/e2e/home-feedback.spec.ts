@@ -60,3 +60,20 @@ for (const theme of ["light", "dark"]) {
     });
   }
 }
+
+test("the AI interpretation note shows only above a summary", async ({ page }) => {
+  await page.route("**/api/status", async (route) => {
+    const data = await (await route.fetch()).json();
+    data.engine.llm = { ok: false, model: null, where: "local", busy: 0 };
+    await route.fulfill({ json: data });
+  });
+  await page.route("**/api/insights?*", async (route) => {
+    const data = await (await route.fetch()).json();
+    data.digest = null;
+    data.digest_pending = false;
+    await route.fulfill({ json: data });
+  });
+  await page.goto(`${state().url}/#/home`);
+  await expect(page.getByText(/With an LLM available, neatroots writes a short summary/)).toBeVisible();
+  await expect(page.getByText(/AI interpretation of aggregate data/)).toHaveCount(0);
+});
