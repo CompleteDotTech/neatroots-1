@@ -224,15 +224,11 @@ test("Sidebar steering and theme controls explain their effect", async ({ page }
       const steeringLabel = page.getByText("steering", { exact: true });
       await expect(steeringLabel).toBeVisible();
       await steeringLabel.hover();
-      await page.waitForTimeout(700);
-      const steeringTip = await page.getByRole("tooltip").allTextContents();
-      expect.soft(steeringTip.join(" "), width + "px " + theme + ": steering tooltip explains when the agent is nudged").toMatch(/check fires mid-run/i);
+      await expect.soft(page.getByRole("tooltip").filter({ hasText: /check fires mid-run/i }), width + "px " + theme + ": steering tooltip explains when the agent is nudged").toBeVisible();
       const themeButton = page.locator('button[aria-label^="Theme:"]');
       await expect(themeButton).toBeVisible();
       await themeButton.hover();
-      await page.waitForTimeout(700);
-      const themeTips = await page.getByRole("tooltip").allTextContents();
-      expect.soft(themeTips.join(" "), width + "px " + theme + ": theme tooltip explains the monitor control").toMatch(/follows your device|system, light, and dark/i);
+      await expect.soft(page.getByRole("tooltip").filter({ hasText: /follows your device|system, light, and dark/i }), width + "px " + theme + ": theme tooltip explains the monitor control").toBeVisible();
       await page.screenshot({ path: capturePath(testInfo, capturePrefix + "-sidebar-tooltip-" + width + "-" + theme + "-" + testInfo.repeatEachIndex + ".png"), fullPage: true });
     }
   }
