@@ -16,7 +16,7 @@ id: repeated-tool-call
 kind: rule
 title: Same tool called repeatedly with identical arguments
 rule:
-  type: repeat            # repeat | errors | count | slow | threshold | match | requires_before | unrecovered_error | run_end
+  type: repeat            # repeat | errors | count | slow | threshold | match | requires_before | unrecovered_error | run_end | cache_reuse
   span: { type: [tool, mcp_tool] }
   same: [tool, input]
   at_least: 3
@@ -36,6 +36,7 @@ action: flag              # or halt (your own rules only; needs steering on for 
 | `requires_before` | a `span` call has no earlier successful `requires` call in the same run, for example a refund with no order lookup. Spans can arrive out of order, so during a run it waits 250 ms for a late `requires` span before it raises (or halts), and a finding resolves if the earlier call turns up later |
 | `unrecovered_error` | at run end, the last call of a tool failed (no later success of that tool) and the run still produced a final answer that does not say anything failed (a words check, so it is a hint, not proof) |
 | `run_end` | the run ended with `error`, `no_output` or `interrupted` |
+| `cache_reuse` | after warmup, LLM calls of one provider and model keep writing the prompt cache and writes outweigh reads (`min_calls`, default 3); see [Prompt-cache reuse](#prompt-cache-reuse) |
 
 ## Questions
 
