@@ -122,3 +122,25 @@ describe("an LLM root with a recorded tool result", () => {
     ]);
   });
 });
+
+describe("an LLM root that wraps a child LLM span", () => {
+  it("reads the exchange once, from the child", async () => {
+    t = await makeRoots({ noEngine: true });
+    const tid = hex(16);
+    const root = hex(8);
+    const exchange = [
+      ...msgAttrs("input_messages", [{ role: "user", content: "Find my order" }]),
+      ...msgAttrs("output_messages", [{ role: "assistant", content: "Checking it now." }]),
+    ];
+    t.roots.ingest([batch([
+      span({ traceId: tid, spanId: root, name: "ChatOpenAI", kind: "llm", attrs: [s("neatlogs.llm.model_name", "mock"), ...exchange] }),
+      span({ traceId: tid, parent: root, name: "openai.chat.completions.create", kind: "llm", attrs: [s("neatlogs.llm.model_name", "mock"), ...exchange] }),
+    ])]);
+    const chat = buildChat(loadTrace(t.roots.store, tid));
+    expect(chat.items).toMatchObject([
+      { type: "user", text: "Find my order" },
+      { type: "assistant", text: "Checking it now." },
+    ]);
+    expect(chat.items.filter((i) => i.type === "assistant")).toHaveLength(1);
+  });
+});
