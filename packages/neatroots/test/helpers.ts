@@ -9,6 +9,7 @@ import { Roots } from "../src/core.js";
 import { defaultConfig, type RootsConfig } from "../src/config.js";
 import { createApp, startServer } from "../src/server/app.js";
 import type { KeyValue, OtlpSpan, ResourceSpansBatch } from "../src/otlp/types.js";
+import { Store } from "../src/store/db.js";
 import { setQuiet } from "../src/util/log.js";
 
 setQuiet(true);
@@ -19,6 +20,19 @@ if (!process.env.NEATROOTS_HOME?.includes("neatroots-test-")) process.env.NEATRO
 
 export function tmpHome(): string {
   return fs.mkdtempSync(path.join(os.tmpdir(), "neatroots-test-"));
+}
+
+const trackedStores = new Set<Store>();
+
+export function trackedStore(dir: string): Store {
+  const store = new Store(dir);
+  trackedStores.add(store);
+  return store;
+}
+
+export function closeTrackedStores(): void {
+  for (const store of trackedStores) if (store.db.open) store.close();
+  trackedStores.clear();
 }
 
 export async function freePort(): Promise<number> {
@@ -74,7 +88,7 @@ export function s(key: string, value: string | number | boolean): KeyValue {
 
 let clock = BigInt(Date.now()) * 1_000_000n;
 
-export function span(p: { traceId: string; spanId?: string; parent?: string; name: string; kind: string; attrs?: KeyValue[]; status?: number; message?: string; durMs?: number; events?: OtlpSpan["events"] }): OtlpSpan {
+export function span(p: { traceId: string; spanId?: string; parent?: string; name: string; kind: string; attrs?: KeyValue[]; status?: number; message?: string; durMs?: number; events?: OtlpSpan["events"]; flags?: number }): OtlpSpan {
   const start = clock;
   const end = start + BigInt(Math.round((p.durMs ?? 5) * 1_000_000));
   clock = end + 1_000_000n;
@@ -90,6 +104,7 @@ export function span(p: { traceId: string; spanId?: string; parent?: string; nam
     events: p.events ?? [],
     links: [],
     status: { code: p.status ?? 1, ...(p.message ? { message: p.message } : {}) },
+    ...(p.flags !== undefined ? { flags: p.flags } : {}),
   };
 }
 

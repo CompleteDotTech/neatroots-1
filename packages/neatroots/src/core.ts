@@ -46,7 +46,7 @@ export class Roots {
   /** The run and span the app has in focus, for the MCP get_current_run tool. */
   focus: { trace_id: string; span_id: string | null; at: number } | null = null;
   /** Cloud pushes a coding agent asked for, waiting for the user to confirm in the app. */
-  readonly pushes = new Map<string, { id: string; trace_ids: string[]; requested_by: string; created_ms: number; status: "pending" | "sent" | "failed" | "declined"; forward_id?: string; error?: string }>();
+  readonly pushes = new Map<string, { id: string; trace_ids: string[]; requested_by: string; created_ms: number; status: "pending" | "sending" | "sent" | "failed" | "declined"; forward_id?: string; error?: string }>();
 
   constructor(opts: RootsOptions = {}) {
     this.home = opts.home ?? rootsHome();
@@ -62,11 +62,15 @@ export class Roots {
     );
     this.checks = new CheckRegistry(this.store, path.join(this.home, "checks"), () => this.config.checkDirs);
     this.steering = new SteeringHub(this);
+    this.steering.warnInactiveHalts(this.checks.rules().filter((c) => c.source === "user" || c.source === "project").map((c) => c.check));
     this.relay = new Relay(this);
     this.imports = new ImportJobs(this);
     this.replays = new Replays(this);
     this.chats = new AgentChats(this);
-    this.store.reindexSearch((n) => n && log.info(`search now covers whole inputs and outputs (${n} spans re-indexed)`));
+    this.store.maintainSearch(
+      (n, ready) => (ready ? n && log.info(`search index ready for fast lookups (${n} rows)`) : log.warn("search index lookups couldn't be prepared; search works but is slower on a large store")),
+      (n, ok) => (ok ? n && log.info(`search now covers whole inputs and outputs (${n} spans re-indexed)`) : log.warn("couldn't finish re-indexing search; it starts over at the next start")),
+    );
     if (!opts.noEngine) {
       const engine = new Engine(this, this.llm, this.decisions, this.checks, this.steering);
       this.engine = engine;
@@ -96,6 +100,13 @@ export class Roots {
         log.warn(`retention failed: ${(err as Error).message}`);
       }
     };
+    // Files a crash during ingest left behind; only a crash makes them, so once at startup is enough.
+    try {
+      const orphans = this.store.reclaimOrphanBlobs();
+      if (orphans.files) log.info(`removed ${orphans.files} payload files no run uses (${Math.round(orphans.bytes / 1024)} KB)`);
+    } catch (err) {
+      log.warn(`payload cleanup failed: ${(err as Error).message}`);
+    }
     run();
     this.sweeper = setInterval(run, 3_600_000);
     this.sweeper.unref();
@@ -110,6 +121,7 @@ export class Roots {
 
   close(): void {
     clearInterval(this.sweeper);
+    this.chats.close();
     this.laya.stop();
     this.store.close();
   }
