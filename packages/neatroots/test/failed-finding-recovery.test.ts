@@ -1,3 +1,5 @@
+import http from "node:http";
+import type { AddressInfo } from "node:net";
 import { afterEach, describe, expect, it } from "vitest";
 import { parseChecks } from "../src/checks/registry.js";
 import { batch, hex, llmSpan, makeRoots, markerSpan, mockLlm, span, toolSpan, until, type TestRoots } from "./helpers.js";
@@ -83,6 +85,64 @@ describe("a question that could not run, then did", () => {
     expect((await page(tb, t)).statuses).toEqual(["failed"]);
     next = "yes";
     await recheck(tb, t);
+    expect((await page(tb, t)).statuses).toEqual(["raised"]); // was ["failed", "raised"]
+  });
+
+  it("does the same when the model really answered HTTP 500 and Re-run checks gets a yes", async () => {
+    const ask = "claim a refund it did not make";
+    const yes = await mockLlm({ yesWhen: [ask] });
+    const no = await mockLlm({});
+    let fail = true;
+    const proxy = http.createServer((req, res) => {
+      const chunks: Buffer[] = [];
+      req.on("data", (c) => chunks.push(c));
+      req.on("end", async () => {
+        const body = Buffer.concat(chunks).toString();
+        const mine = body.includes(ask);
+        if (mine && fail) {
+          res.writeHead(500, { "content-type": "application/json" });
+          res.end('{"error":{"message":"upstream overloaded"}}');
+          return;
+        }
+        const target = new URL(mine ? yes.url : no.url);
+        const r = await fetch(`${target.origin}${req.url ?? ""}`, { method: req.method, headers: { "content-type": "application/json" }, body: req.method === "GET" ? undefined : body });
+        res.writeHead(r.status, { "content-type": "application/json" });
+        res.end(await r.text());
+      });
+    });
+    await new Promise<void>((r) => proxy.listen(0, "127.0.0.1", () => r()));
+    const tb = await makeRoots({ serve: true, llmUrl: `http://127.0.0.1:${(proxy.address() as AddressInfo).port}${new URL(no.url).pathname}` });
+    cleanup.push(async () => {
+      await tb.close();
+      await yes.close();
+      await no.close();
+      await new Promise((r) => proxy.close(r));
+    });
+    tb.roots.checks.save(
+      parseChecks(`
+- id: refund-claimed
+  kind: yes_no
+  scope: trace
+  title: Claimed a refund it did not make
+  ask: Did the agent ${ask}?
+  flag_at: 0.5
+  evidence: { spans: { type: [llm] } }
+`).checks[0],
+      "user",
+    );
+    const t = hex(16);
+    const r = hex(8);
+    tb.roots.ingest([batch([llmSpan(t, r, { user: "refund order 1001", out: "Refunded." }), span({ traceId: t, spanId: r, name: "agent", kind: "workflow" }), markerSpan(t, r)])]);
+    await finish(tb, t);
+    const failed = await page(tb, t);
+    expect(failed.statuses).toEqual(["failed"]);
+    expect(String((failed.findings[0].detail as { error?: string }).error)).toContain("HTTP 500");
+
+    fail = false;
+    const headers = { origin: tb.url.replace("127.0.0.1", "localhost") };
+    expect((await fetch(`${tb.url}/api/runs/${t}/recheck`, { method: "POST", headers })).ok).toBe(true);
+    await until(async () => (await page(tb, t)).statuses.includes("raised"), 15_000);
+    await tb.roots.engine!.waitIdle(t, 10_000);
     expect((await page(tb, t)).statuses).toEqual(["raised"]); // was ["failed", "raised"]
   });
 
