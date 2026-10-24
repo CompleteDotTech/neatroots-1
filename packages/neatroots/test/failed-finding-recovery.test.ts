@@ -14,7 +14,7 @@ afterEach(async () => {
   for (const c of cleanup.splice(0)) await c();
 });
 
-type Answer = "error" | "no" | "yes";
+type Answer = "error" | `error:${string}` | "no" | "yes";
 
 /** A served neatroots with one question whose answer each call is decided by `answer(evidence)`. */
 async function setup(scope: "trace" | "span", answer: (evidence: string) => Answer) {
@@ -41,7 +41,7 @@ async function setup(scope: "trace" | "span", answer: (evidence: string) => Answ
   decisions.decide = async (evidence, questions, o) => {
     if (!questions.some((q) => q.name === "refund-claimed")) return real(evidence, questions, o);
     const a = answer(evidence);
-    if (a === "error") throw new Error("the model's answer was not valid JSON");
+    if (a.startsWith("error")) throw new Error(a === "error" ? "the model's answer was not valid JSON" : a.slice("error:".length));
     return { answers: { "refund-claimed": { probability: a === "yes" ? 0.95 : 0.05 } }, backend: "llm", model: "mock", latencyMs: 1 };
   };
   return tb;
@@ -150,7 +150,7 @@ describe("a question that could not run, then did", () => {
     // B first: a span's evidence includes the spans before it, so only A's own call mentions lookup_a.
     let failB = true;
     let asked = 0;
-    const tb = await setup("span", (evidence) => (asked++, evidence.includes("lookup_a") || failB ? "error" : "no"));
+    const tb = await setup("span", (evidence): Answer => (asked++, evidence.includes("lookup_a") ? "error:error about lookup_a" : failB ? "error:error about lookup_b" : "no"));
     // A fast classifier asks every span (an LLM asks only the newest), so a re-run judges B again.
     (tb.roots as unknown as { decisions: { isSlow: () => Promise<boolean> } }).decisions.isSlow = async () => false;
     const t = hex(16);
@@ -168,10 +168,12 @@ describe("a question that could not run, then did", () => {
     await finish(tb, t);
     expect((await failedSpans()).sort()).toEqual([a.spanId, b.spanId].sort()); // main kept only the first
 
-    // B is answered now, A still fails: A's failure must not go with B's.
+    // B is answered now, A still fails: A's failure must not go with B's, and the row shows A's error.
     failB = false;
     await recheck(tb, t);
     expect(await failedSpans()).toEqual([a.spanId]);
+    const row = (await page(tb, t)).findings.find((f) => f.status === "failed")!;
+    expect((row.detail as { error?: string }).error).toBe("error about lookup_a");
   });
 
   it("keeps a span's row while that span is still unjudged, and drops it once it is", async () => {

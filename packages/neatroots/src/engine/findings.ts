@@ -57,8 +57,24 @@ export function clearFailure(store: Store, traceId: string, checkId: string, spa
   for (const f of store.failedFindingsFor(traceId, checkId)) {
     if (spanId && !findingSpans(f).includes(spanId)) continue;
     const rest = spanId ? dropOccurrence(store, f, spanId) : undefined;
-    if (!rest) store.deleteFinding(f.id);
-    changed.push(rest ?? f);
+    if (!rest) {
+      store.deleteFinding(f.id);
+      changed.push(f);
+      continue;
+    }
+    // The row now leads with another span: show that span's own error.
+    const errors = spanErrors(f);
+    delete errors[spanId!];
+    const lead = String(rest.detail.span_id ?? "");
+    changed.push(store.updateFinding(rest.id, { detail: { ...rest.detail, errors, error: errors[lead] ?? rest.detail.error } }) ?? rest);
   }
   return changed;
+}
+
+/** Each failed span's own error on a failed row (older rows only have the first span's). */
+export function spanErrors(f: Finding): Record<string, string> {
+  const errors = f.detail.errors && typeof f.detail.errors === "object" ? { ...(f.detail.errors as Record<string, string>) } : {};
+  const first = f.detail.span_id ? String(f.detail.span_id) : "";
+  if (first && !(first in errors) && typeof f.detail.error === "string") errors[first] = f.detail.error;
+  return errors;
 }
