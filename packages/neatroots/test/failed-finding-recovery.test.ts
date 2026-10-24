@@ -2,7 +2,7 @@ import http from "node:http";
 import type { AddressInfo } from "node:net";
 import { afterEach, describe, expect, it } from "vitest";
 import { parseChecks } from "../src/checks/registry.js";
-import { batch, hex, llmSpan, makeRoots, markerSpan, mockLlm, span, toolSpan, until, type TestRoots } from "./helpers.js";
+import { batch, hex, llmSpan, makeRoots, markerSpan, mockLlm, poll, span, toolSpan, until, type TestRoots } from "./helpers.js";
 
 // A question whose model call errors (a malformed answer, say) records a "failed" finding, which the
 // run page shows as "1 check could not run". When the same question later gets an answer on that
@@ -141,9 +141,37 @@ describe("a question that could not run, then did", () => {
     fail = false;
     const headers = { origin: tb.url.replace("127.0.0.1", "localhost") };
     expect((await fetch(`${tb.url}/api/runs/${t}/recheck`, { method: "POST", headers })).ok).toBe(true);
-    await until(async () => (await page(tb, t)).statuses.includes("raised"), 15_000);
+    await poll(async () => (await page(tb, t)).statuses.includes("raised"), 15_000);
     await tb.roots.engine!.waitIdle(t, 10_000);
     expect((await page(tb, t)).statuses).toEqual(["raised"]); // was ["failed", "raised"]
+  });
+
+  it("lists every span whose call failed, and keeps the others when one is answered", async () => {
+    // B first: a span's evidence includes the spans before it, so only A's own call mentions lookup_a.
+    let failB = true;
+    let asked = 0;
+    const tb = await setup("span", (evidence) => (asked++, evidence.includes("lookup_a") || failB ? "error" : "no"));
+    // A fast classifier asks every span (an LLM asks only the newest), so a re-run judges B again.
+    (tb.roots as unknown as { decisions: { isSlow: () => Promise<boolean> } }).decisions.isSlow = async () => false;
+    const t = hex(16);
+    const r = hex(8);
+    const b = toolSpan(t, r, "lookup_b", '{"order":"1002"}', '{"ok":true}');
+    const a = toolSpan(t, r, "lookup_a", '{"order":"1001"}', '{"ok":true}');
+    // Separate batches, so each span is asked on its own call.
+    const failedSpans = async () =>
+      (await page(tb, t)).findings.filter((f) => f.status === "failed").flatMap((f) => [f.detail.span_id, ...((f.detail as { occurrences?: string[] }).occurrences ?? [])]);
+    tb.roots.ingest([batch([b])]);
+    await until(() => asked >= 1);
+    tb.roots.ingest([batch([a])]);
+    await until(() => asked >= 2);
+    tb.roots.ingest([batch([span({ traceId: t, spanId: r, name: "agent", kind: "workflow" }), markerSpan(t, r)])]);
+    await finish(tb, t);
+    expect((await failedSpans()).sort()).toEqual([a.spanId, b.spanId].sort()); // main kept only the first
+
+    // B is answered now, A still fails: A's failure must not go with B's.
+    failB = false;
+    await recheck(tb, t);
+    expect(await failedSpans()).toEqual([a.spanId]);
   });
 
   it("keeps a span's row while that span is still unjudged, and drops it once it is", async () => {

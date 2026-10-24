@@ -46,3 +46,19 @@ export function dropOccurrence(store: Store, f: Finding, spanId: string): Findin
 export function newFindingStatus(store: Store, checkId: string, project: string): "raised" | "quiet" {
   return store.dismissalsIn(checkId, project) >= QUIET_AFTER ? "quiet" : "raised";
 }
+
+/**
+ * A question got an answer, so it no longer "could not run" there: the span leaves the check's
+ * failed row (one per run, listing the spans whose call failed), which goes once no span is left.
+ * For a whole-run question the row just goes. Returns the rows changed or removed.
+ */
+export function clearFailure(store: Store, traceId: string, checkId: string, spanId: string | null): Finding[] {
+  const changed: Finding[] = [];
+  for (const f of store.failedFindingsFor(traceId, checkId)) {
+    if (spanId && !findingSpans(f).includes(spanId)) continue;
+    const rest = spanId ? dropOccurrence(store, f, spanId) : undefined;
+    if (!rest) store.deleteFinding(f.id);
+    changed.push(rest ?? f);
+  }
+  return changed;
+}
