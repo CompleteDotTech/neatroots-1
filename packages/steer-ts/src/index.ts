@@ -13,6 +13,7 @@
  */
 
 import { SteeredRequest } from "./request.js";
+import { boundedFlush } from "./flush.js";
 
 export const GUIDANCE_OPEN = "<neatroots-guidance>";
 export const GUIDANCE_CLOSE = "</neatroots-guidance>";
@@ -87,10 +88,7 @@ export function configure(opts: { url?: string; disabled?: boolean; traceId?: ()
   if (opts.traceId) state.traceIdProvider = opts.traceId;
   // Passing the app's own `neatlogs` module avoids a second copy of the SDK
   // (ESM vs CommonJS, or a linked install) that would not see the active span.
-  if (opts.neatlogs) {
-    neatlogsMod = opts.neatlogs as NeatlogsModule;
-    flushing = undefined;
-  }
+  if (opts.neatlogs) neatlogsMod = opts.neatlogs as NeatlogsModule;
   if (opts.disabled !== undefined) state.disabled = opts.disabled;
   state.mode = "unknown";
   state.modeCheckedAt = 0;
@@ -197,41 +195,11 @@ export async function currentTrace(): Promise<[string | undefined, string | unde
   return [undefined, undefined];
 }
 
-/** How long a flush before a claim or a self-check may hold up the agent's call. */
-const FLUSH_TIMEOUT_MS = 500;
-/** The SDK flush under way, if any. */
-let flushing: Promise<void> | undefined;
-
-/**
- * Pushes finished spans to neatroots now, so gate mode and self-checks see the latest step.
- *
- * Waits at most FLUSH_TIMEOUT_MS, like the Python hook. A neatroots that takes the connection but
- * doesn't answer (busy or stuck) holds the SDK's flush for about 10 s while it retries, and the
- * agent's call must not wait for that. A flush that is still running isn't started again.
- */
+/** Pushes finished spans to neatroots now, so gate mode and self-checks see the latest step (at most FLUSH_TIMEOUT_MS). */
 async function flushSdk(): Promise<void> {
   const nl = await neatlogs();
   const flush = nl?.flush;
-  if (!flush) return;
-  if (!flushing) {
-    const run: Promise<void> = (async () => {
-      try {
-        await flush.call(nl);
-      } catch {
-        /* ignore */
-      }
-    })().finally(() => {
-      if (flushing === run) flushing = undefined;
-    });
-    flushing = run;
-  }
-  let timer: ReturnType<typeof setTimeout> | undefined;
-  const waited = new Promise<void>((resolve) => {
-    timer = setTimeout(resolve, FLUSH_TIMEOUT_MS);
-    (timer as { unref?: () => void }).unref?.();
-  });
-  await Promise.race([flushing, waited]);
-  clearTimeout(timer);
+  if (nl && flush) await boundedFlush(nl, () => flush.call(nl));
 }
 
 async function record(note: Note): Promise<void> {

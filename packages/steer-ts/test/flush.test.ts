@@ -75,4 +75,37 @@ describe("flushing the SDK before a claim or a self-check", () => {
     await expect(guidance(trace)).resolves.toBeUndefined();
     expect(claim).toHaveBeenCalledOnce();
   });
+
+  it("keeps a running flush when configure() is given the same SDK, and starts one for a new SDK", async () => {
+    const flush = vi.fn(() => new Promise<void>(() => {}));
+    const same = { flush };
+    configure({ disabled: false, neatlogs: same });
+    await guidance(trace);
+    configure({ disabled: false, neatlogs: same });
+    await guidance(trace);
+    expect(flush).toHaveBeenCalledOnce();
+    const other = vi.fn(async () => undefined);
+    configure({ disabled: false, neatlogs: { flush: other } });
+    await guidance(trace);
+    expect(other).toHaveBeenCalledOnce();
+  });
+
+  it("keeps the process alive while it waits, so a short-lived agent still gets to its claim", async () => {
+    // A flush that never settles and holds nothing open: only the wait's own timer is left.
+    configure({ disabled: false, neatlogs: { flush: () => new Promise<void>(() => {}) } });
+    const real = globalThis.setTimeout;
+    const timers: { ms: number | undefined; t: ReturnType<typeof setTimeout> }[] = [];
+    vi.spyOn(globalThis, "setTimeout").mockImplementation(((fn: () => void, ms?: number) => {
+      const t = real(fn, ms);
+      timers.push({ ms, t });
+      return t;
+    }) as typeof setTimeout);
+    const pending = guidance(trace);
+    await new Promise((r) => setImmediate(r));
+    const wait = timers.find((x) => x.ms === 500);
+    expect(wait).toBeDefined();
+    expect((wait!.t as { hasRef?: () => boolean }).hasRef?.()).toBe(true);
+    await pending;
+    expect(claim).toHaveBeenCalledOnce();
+  });
 });
