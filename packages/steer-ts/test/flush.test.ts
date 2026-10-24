@@ -90,6 +90,17 @@ describe("flushing the SDK before a claim or a self-check", () => {
     expect(other).toHaveBeenCalledOnce();
   });
 
+  it("tracks each SDK's running flush, so switching SDKs and back doesn't flush the first one twice", async () => {
+    const a = { flush: vi.fn(() => new Promise<void>(() => {})) };
+    const b = { flush: vi.fn(() => new Promise<void>(() => {})) };
+    for (const s of [a, b, a]) {
+      configure({ disabled: false, neatlogs: s });
+      await guidance(trace);
+    }
+    expect(a.flush).toHaveBeenCalledOnce();
+    expect(b.flush).toHaveBeenCalledOnce();
+  });
+
   it("keeps the process alive while it waits, so a short-lived agent still gets to its claim", async () => {
     // A flush that never settles and holds nothing open: only the wait's own timer is left.
     configure({ disabled: false, neatlogs: { flush: () => new Promise<void>(() => {}) } });
