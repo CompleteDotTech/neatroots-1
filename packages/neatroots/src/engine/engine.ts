@@ -596,6 +596,9 @@ export class Engine {
       backend: result.backend,
       latency_ms: result.latencyMs,
     });
+    // It ran this time, so an earlier "could not run" for the same span (or the whole run) is stale:
+    // the panel would keep saying the check failed, and a flag now would sit next to it.
+    for (const f of this.roots.store.clearFailedFindings(run.traceId, check.id, spanId)) this.roots.bus.emit("finding", f);
     const open = this.findOpen(run.traceId, check.id, spanId);
     if (verdict.flagged) {
       if (open) {

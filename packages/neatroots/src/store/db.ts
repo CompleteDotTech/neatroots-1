@@ -1121,6 +1121,19 @@ export class Store {
     return this.updateFinding(id, { status });
   }
 
+  /**
+   * Removes a check's "could not run" rows on a run once it has run: the row for the span it just
+   * judged, or the whole-run row when `spanId` is null. Returns the rows removed.
+   */
+  clearFailedFindings(traceId: string, checkId: string, spanId: string | null): Finding[] {
+    const stale = this.findingsForTrace(traceId).filter((f) => f.check_id === checkId && f.status === "failed" && ((f.detail.span_id as string | null | undefined) ?? null) === spanId);
+    if (!stale.length) return [];
+    const del = this.db.prepare("DELETE FROM findings WHERE id = ?");
+    for (const f of stale) del.run(f.id);
+    this.refreshFindingCounts(traceId);
+    return stale;
+  }
+
   // -------------------------------------------------------------- decisions
 
   insertDecision(d: Omit<DecisionRow, "id" | "created_ms">): DecisionRow {
