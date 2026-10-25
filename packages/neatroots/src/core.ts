@@ -44,6 +44,8 @@ export class Roots {
   private quietSweeper?: NodeJS.Timeout;
   /** The first quiet-run sweep; resumeUnfinished waits on it so a run is not rechecked twice at startup. */
   private initialQuiet?: Promise<void>;
+  /** The retention sweep in progress, if any. */
+  private sweeping?: Promise<void>;
   /** When a coding agent last called neatroots over MCP. */
   mcpSeenMs: number | null = null;
   /** The run and span the app has in focus, for the MCP get_current_run tool. */
@@ -95,13 +97,21 @@ export class Roots {
 
   /** Applies retention now and every hour. */
   startRetention(): void {
+    // The sweep works a few runs at a time between turns of the event loop, so the server keeps
+    // answering during a large trim (#429). One sweep at a time: an hourly one waits for the last.
     const run = () => {
-      try {
-        const removed = this.store.sweep(this.config.retention.days, this.config.retention.maxGb * 1024 ** 3);
-        if (removed) log.info(`retention removed ${removed} old runs`);
-      } catch (err) {
-        log.warn(`retention failed: ${(err as Error).message}`);
-      }
+      if (this.sweeping) return;
+      this.sweeping = this.store
+        .sweepAsync(this.config.retention.days, this.config.retention.maxGb * 1024 ** 3)
+        .then((removed) => {
+          if (removed) log.info(`retention removed ${removed} old runs`);
+        })
+        .catch((err: Error) => {
+          if (this.store.db.open) log.warn(`retention failed: ${err.message}`);
+        })
+        .finally(() => {
+          this.sweeping = undefined;
+        });
     };
     // Files a crash during ingest left behind; only a crash makes them, so once at startup is enough.
     try {
