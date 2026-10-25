@@ -137,9 +137,11 @@ describe("quiet-run sweep at startup (issue #673)", () => {
     cleanup.push(async () => {
       await tb.close();
     });
+    // must mirror Store.quietRuns' statement, including ORDER BY and LIMIT, so an index
+    // regression on the production query fails here
     const plan = tb.roots.store.db
-      .prepare("EXPLAIN QUERY PLAN SELECT * FROM runs WHERE status = 'running' AND doctor = 0 AND complete = 0 AND updated_ms < ?")
-      .all(0) as { detail: string }[];
+      .prepare("EXPLAIN QUERY PLAN SELECT * FROM runs WHERE status = 'running' AND doctor = 0 AND complete = 0 AND updated_ms < ? ORDER BY updated_ms ASC LIMIT ?")
+      .all(0, -1) as { detail: string }[];
     expect(plan.map((r) => r.detail).join(" | ")).toContain("runs_quiet");
   });
 
@@ -275,6 +277,48 @@ describe("quiet-run sweep at startup (issue #673)", () => {
     };
     // b's real end arrives after the sweep claimed it
     (engine as unknown as { live: Map<string, { ended: boolean }> }).live.get(b)!.ended = true;
+
+    await engine.recheckClaimedQuietRuns(claimed);
+    expect(calls).toEqual([c]);
+    expect(engine.isQuietClaimed(b)).toBe(false);
+    expect(engine.isQuietClaimed(c)).toBe(false);
+  }, 30_000);
+
+  it("skips a claimed run whose persisted end landed after the claim", async () => {
+    const llm = await mockLlm({ yesWhen: [] });
+    const tb = await makeRoots({ llmUrl: llm.url });
+    cleanup.push(async () => {
+      await tb.close();
+      await llm.close();
+    });
+    const engine = tb.roots.engine!;
+
+    const mk = () => {
+      const t = hex(16);
+      tb.roots.ingest([batch([llmSpan(t, hex(8), { user: "quiet run" })])]);
+      return t;
+    };
+    const b = mk();
+    const c = mk();
+    engine.progress.checking(b);
+    engine.progress.checking(c);
+    tb.roots.store.db
+      .prepare("UPDATE runs SET updated_ms = ? WHERE trace_id IN (?, ?)")
+      .run(Date.now() - 31 * 60_000, b, c);
+
+    const claimed = engine.claimQuietRuns(30 * 60_000);
+    expect([...claimed].sort()).toEqual([b, c].sort());
+
+    const calls: string[] = [];
+    const orig = engine.recheck.bind(engine);
+    (engine as unknown as { recheck: (id: string, opts?: { resume?: boolean }) => Promise<void> }).recheck = async (id, opts) => {
+      calls.push(id);
+      return orig(id, opts);
+    };
+    // b's real end lands after the claim and its live entry is already gone (releaseLive),
+    // so only the persisted row can tell the sweep it ended normally
+    (engine as unknown as { live: Map<string, unknown> }).live.delete(b);
+    tb.roots.store.db.prepare("UPDATE runs SET status = 'ok' WHERE trace_id = ?").run(b);
 
     await engine.recheckClaimedQuietRuns(claimed);
     expect(calls).toEqual([c]);

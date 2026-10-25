@@ -1097,8 +1097,11 @@ ${library}`;
     for (const id of ids) {
       try {
         // A run that ended normally after the claim keeps its own end pass; rechecking it
-        // here would rebuild its live state and run a second one.
-        if (this.live.get(id)?.ended) continue;
+        // here would rebuild its live state and run a second one. The live entry can be
+        // gone once the end is a minute old (releaseLive), so check the persisted row too:
+        // a claimed row still reads interrupted until the real end lands.
+        const row = this.roots.store.getRun(id);
+        if (this.live.get(id)?.ended || !row || row.status !== "interrupted") continue;
         await this.recheck(id, { resume: true });
       } catch (err) {
         // One failed recheck must not strand the rest of the batch: the remaining ids are
