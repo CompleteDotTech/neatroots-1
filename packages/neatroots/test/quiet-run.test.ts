@@ -201,4 +201,44 @@ describe("quiet-run sweep at startup (issue #673)", () => {
     expect(tb.roots.store.getSummary(a)).toBeTruthy();
     expect(tb.roots.store.getSummary(b)).toBeTruthy();
   }, 30_000);
+
+  it("rechecks the rest of the batch when one quiet run's recheck fails", async () => {
+    const llm = await mockLlm({ yesWhen: [] });
+    const tb = await makeRoots({ llmUrl: llm.url });
+    cleanup.push(async () => {
+      await tb.close();
+      await llm.close();
+    });
+    const engine = tb.roots.engine!;
+
+    const mk = () => {
+      const t = hex(16);
+      tb.roots.ingest([batch([llmSpan(t, hex(8), { user: "quiet run" })])]);
+      return t;
+    };
+    const b = mk();
+    const c = mk();
+    // leave both the way a crash would: checks outstanding, no end (a quiet run's live work
+    // never settles on its own).
+    engine.progress.checking(b);
+    engine.progress.checking(c);
+    tb.roots.store.db
+      .prepare("UPDATE runs SET updated_ms = ? WHERE trace_id IN (?, ?)")
+      .run(Date.now() - 31 * 60_000, b, c);
+
+    const claimed = engine.claimQuietRuns(30 * 60_000);
+    expect([...claimed].sort()).toEqual([b, c].sort());
+
+    const orig = engine.recheck.bind(engine);
+    (engine as unknown as { recheck: (id: string, opts?: { resume?: boolean }) => Promise<void> }).recheck = async (id, opts) => {
+      if (id === b) throw new Error("model down");
+      return orig(id, opts);
+    };
+
+    // must not reject, and the later claimed run still gets its end-of-run pass
+    await engine.recheckClaimedQuietRuns(claimed);
+    expect(engine.isQuietClaimed(b)).toBe(false);
+    expect(engine.isQuietClaimed(c)).toBe(false);
+    expect(tb.roots.store.getSummary(c)).toBeTruthy();
+  }, 30_000);
 });

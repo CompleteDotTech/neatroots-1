@@ -157,6 +157,13 @@ function pickSpans<S extends { id: string }>(spans: S[], ids: string[], traceId:
 /** A run with no new spans for this long is treated as ended: its end never arrived (issue #213). */
 export const QUIET_RUN_MS = 30 * 60_000;
 
+/**
+ * Most runs one quiet-run sweep claims at once. Claiming writes synchronously, so an
+ * unbounded pass (a long downtime's backlog) would block the event loop; the runs left
+ * over are still "running", so the next sweep claims them.
+ */
+export const QUIET_CLAIM_BATCH = 200;
+
 export class Engine {
   private live = new Map<string, LiveRun>();
   private workflowPlanning = new Map<string, Promise<PlanRow | undefined>>();
@@ -1074,7 +1081,7 @@ ${library}`;
   claimQuietRuns(quietMs = QUIET_RUN_MS, now = Date.now()): string[] {
     const cutoff = now - quietMs;
     const claimed: string[] = [];
-    for (const run of this.roots.store.quietRuns(quietMs, now)) {
+    for (const run of this.roots.store.quietRuns(quietMs, now).slice(0, QUIET_CLAIM_BATCH)) {
       // Only claim when this sweep actually marked the run - an overlapping sweep
       // that already claimed it must not repeat the end-of-run model calls.
       if (this.roots.store.markRunInterrupted(run.trace_id, "no end received", cutoff)) {
@@ -1090,6 +1097,11 @@ ${library}`;
     for (const id of ids) {
       try {
         await this.recheck(id, { resume: true });
+      } catch (err) {
+        // One failed recheck must not strand the rest of the batch: the remaining ids are
+        // already marked interrupted and startup recovery leaves them to this sweep, so
+        // propagating here would skip their rechecks until a restart.
+        log.warn(`quiet-run recheck failed for ${id.slice(0, 8)}: ${(err as Error).message}`);
       } finally {
         this.quietClaimed.delete(id);
       }
