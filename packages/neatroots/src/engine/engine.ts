@@ -1118,7 +1118,12 @@ ${library}`;
         // propagating here would skip their rechecks until a restart. Put the failed run
         // back to running so a later sweep retries it.
         log.warn(`quiet-run recheck failed for ${id.slice(0, 8)}: ${(err as Error).message}`);
-        this.roots.store.restoreQuietRun(id);
+        try {
+          this.roots.store.restoreQuietRun(id);
+        } catch (restoreErr) {
+          // The row stays interrupted (no retry) rather than stranding the rest of the batch.
+          log.warn(`quiet-run restore failed for ${id.slice(0, 8)}: ${(restoreErr as Error).message}`);
+        }
       } finally {
         this.quietClaimed.delete(id);
       }

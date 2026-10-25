@@ -249,6 +249,81 @@ describe("quiet-run sweep at startup (issue #673)", () => {
     expect(tb.roots.store.getRun(b)!.status).toBe("interrupted");
   }, 30_000);
 
+  it("does not resurrect a run that ended for real before its failed recheck was restored", async () => {
+    const llm = await mockLlm({ yesWhen: [] });
+    const tb = await makeRoots({ llmUrl: llm.url });
+    cleanup.push(async () => {
+      await tb.close();
+      await llm.close();
+    });
+    const engine = tb.roots.engine!;
+
+    const b = hex(16);
+    tb.roots.ingest([batch([llmSpan(b, hex(8), { user: "quiet run" })])]);
+    engine.progress.checking(b);
+    tb.roots.store.db
+      .prepare("UPDATE runs SET updated_ms = ? WHERE trace_id = ?")
+      .run(Date.now() - 31 * 60_000, b);
+
+    expect(engine.claimQuietRuns(30 * 60_000)).toEqual([b]);
+
+    // the run's real end lands mid-flight: the guard still reads interrupted when the loop
+    // reaches it, the end persists during the recheck, and the recheck fails. the restore
+    // must not flip the finished row back to running.
+    let flipped = false;
+    (engine as unknown as { recheck: (id: string, opts?: { resume?: boolean }) => Promise<void> }).recheck = async () => {
+      tb.roots.store.db.prepare("UPDATE runs SET status = 'ok' WHERE trace_id = ?").run(b);
+      flipped = true;
+      throw new Error("model down");
+    };
+    await engine.recheckClaimedQuietRuns([b]);
+    expect(flipped).toBe(true);
+    expect(tb.roots.store.getRun(b)!.status).toBe("ok");
+    expect(engine.isQuietClaimed(b)).toBe(false);
+  }, 30_000);
+
+  it("keeps rechecking the batch when restoring a failed run itself fails", async () => {
+    const llm = await mockLlm({ yesWhen: [] });
+    const tb = await makeRoots({ llmUrl: llm.url });
+    cleanup.push(async () => {
+      await tb.close();
+      await llm.close();
+    });
+    const engine = tb.roots.engine!;
+
+    const mk = () => {
+      const t = hex(16);
+      tb.roots.ingest([batch([llmSpan(t, hex(8), { user: "quiet run" })])]);
+      return t;
+    };
+    const b = mk();
+    const c = mk();
+    engine.progress.checking(b);
+    engine.progress.checking(c);
+    tb.roots.store.db
+      .prepare("UPDATE runs SET updated_ms = ? WHERE trace_id IN (?, ?)")
+      .run(Date.now() - 31 * 60_000, b, c);
+
+    const claimed = engine.claimQuietRuns(30 * 60_000);
+    expect([...claimed].sort()).toEqual([b, c].sort());
+
+    const orig = engine.recheck.bind(engine);
+    (engine as unknown as { recheck: (id: string, opts?: { resume?: boolean }) => Promise<void> }).recheck = async (id, opts) => {
+      if (id === b) throw new Error("model down");
+      return orig(id, opts);
+    };
+    (tb.roots.store as unknown as { restoreQuietRun: (id: string) => void }).restoreQuietRun = () => {
+      throw new Error("database is locked");
+    };
+
+    // must not reject: b stays interrupted (no retry) and c still gets its end-of-run pass
+    await engine.recheckClaimedQuietRuns(claimed);
+    expect(tb.roots.store.getRun(b)!.status).toBe("interrupted");
+    expect(engine.isQuietClaimed(b)).toBe(false);
+    expect(engine.isQuietClaimed(c)).toBe(false);
+    expect(tb.roots.store.getSummary(c)).toBeTruthy();
+  }, 30_000);
+
   it("stops claiming at a failed mark and still rechecks the runs it claimed", async () => {
     const llm = await mockLlm({ yesWhen: [] });
     const tb = await makeRoots({ llmUrl: llm.url });
