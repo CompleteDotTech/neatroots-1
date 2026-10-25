@@ -1084,7 +1084,16 @@ ${library}`;
     for (const run of this.roots.store.quietRuns(quietMs, now, QUIET_CLAIM_BATCH)) {
       // Only claim when this sweep actually marked the run - an overlapping sweep
       // that already claimed it must not repeat the end-of-run model calls.
-      if (this.roots.store.markRunInterrupted(run.trace_id, "no end received", cutoff)) {
+      let marked: boolean;
+      try {
+        marked = this.roots.store.markRunInterrupted(run.trace_id, "no end received", cutoff);
+      } catch (err) {
+        // A failed mark leaves its row running for the next sweep. Stop here and return the
+        // ids already claimed: propagating would leave them claimed with no recheck coming.
+        log.warn(`quiet-run claim stopped at ${run.trace_id.slice(0, 8)}: ${(err as Error).message}`);
+        break;
+      }
+      if (marked) {
         claimed.push(run.trace_id);
         this.quietClaimed.add(run.trace_id);
       }
@@ -1106,8 +1115,10 @@ ${library}`;
       } catch (err) {
         // One failed recheck must not strand the rest of the batch: the remaining ids are
         // already marked interrupted and startup recovery leaves them to this sweep, so
-        // propagating here would skip their rechecks until a restart.
+        // propagating here would skip their rechecks until a restart. Put the failed run
+        // back to running so a later sweep retries it.
         log.warn(`quiet-run recheck failed for ${id.slice(0, 8)}: ${(err as Error).message}`);
+        this.roots.store.restoreQuietRun(id);
       } finally {
         this.quietClaimed.delete(id);
       }

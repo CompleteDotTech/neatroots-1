@@ -815,6 +815,20 @@ export class Store {
     return r.changes > 0;
   }
 
+  /**
+   * Puts a sweep-claimed quiet run back the way the sweep found it, so the next sweep retries
+   * it after its recheck failed. Only a row this sweep interrupted ("no end received") is
+   * restored - a run interrupted any other way is left alone. The mark bumped updated_ms, so
+   * it goes back to the run's last activity and the retry is not delayed by another quietMs.
+   */
+  restoreQuietRun(traceId: string): void {
+    this.db
+      .prepare(
+        "UPDATE runs SET status = 'running', interrupted = 0, termination_reason = NULL, ended_ms = NULL, updated_ms = COALESCE(last_span_ms, received_ms) WHERE trace_id = ? AND status = 'interrupted' AND termination_reason = 'no end received'",
+      )
+      .run(traceId);
+  }
+
   /** The WHERE clauses and parameters for a run filter, shared by listing and counting. */
   private runFilter(f: RunFilter): { where: string[]; p: Record<string, unknown> } {
     const where: string[] = [];

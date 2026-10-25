@@ -225,8 +225,8 @@ describe("quiet-run sweep at startup (issue #673)", () => {
     engine.progress.checking(b);
     engine.progress.checking(c);
     tb.roots.store.db
-      .prepare("UPDATE runs SET updated_ms = ? WHERE trace_id IN (?, ?)")
-      .run(Date.now() - 31 * 60_000, b, c);
+      .prepare("UPDATE runs SET updated_ms = ?, last_span_ms = ? WHERE trace_id IN (?, ?)")
+      .run(Date.now() - 31 * 60_000, Date.now() - 31 * 60_000, b, c);
 
     const claimed = engine.claimQuietRuns(30 * 60_000);
     expect([...claimed].sort()).toEqual([b, c].sort());
@@ -242,6 +242,55 @@ describe("quiet-run sweep at startup (issue #673)", () => {
     expect(engine.isQuietClaimed(b)).toBe(false);
     expect(engine.isQuietClaimed(c)).toBe(false);
     expect(tb.roots.store.getSummary(c)).toBeTruthy();
+
+    // the failed run goes back to running so a later sweep retries it
+    expect(tb.roots.store.getRun(b)!.status).toBe("running");
+    expect(engine.claimQuietRuns(30 * 60_000)).toEqual([b]);
+    expect(tb.roots.store.getRun(b)!.status).toBe("interrupted");
+  }, 30_000);
+
+  it("stops claiming at a failed mark and still rechecks the runs it claimed", async () => {
+    const llm = await mockLlm({ yesWhen: [] });
+    const tb = await makeRoots({ llmUrl: llm.url });
+    cleanup.push(async () => {
+      await tb.close();
+      await llm.close();
+    });
+    const engine = tb.roots.engine!;
+
+    const mk = () => {
+      const t = hex(16);
+      tb.roots.ingest([batch([llmSpan(t, hex(8), { user: "quiet run" })])]);
+      return t;
+    };
+    const b = mk();
+    const c = mk();
+    engine.progress.checking(b);
+    engine.progress.checking(c);
+    // b is the stalest, so the claim loop reaches it first
+    tb.roots.store.db.prepare("UPDATE runs SET updated_ms = ? WHERE trace_id = ?").run(Date.now() - 32 * 60_000, b);
+    tb.roots.store.db.prepare("UPDATE runs SET updated_ms = ? WHERE trace_id = ?").run(Date.now() - 31 * 60_000, c);
+
+    const store = tb.roots.store as unknown as {
+      markRunInterrupted: (id: string, reason: string, cutoff: number) => boolean;
+    };
+    const origMark = store.markRunInterrupted.bind(tb.roots.store);
+    store.markRunInterrupted = (id, reason, cutoff) => {
+      if (id === c) throw new Error("database is locked");
+      return origMark(id, reason, cutoff);
+    };
+
+    // the failed mark stops the loop; the run it failed on stays running for the next sweep
+    const claimed = engine.claimQuietRuns(30 * 60_000);
+    expect(claimed).toEqual([b]);
+    expect(tb.roots.store.getRun(c)!.status).toBe("running");
+    store.markRunInterrupted = origMark;
+
+    await engine.recheckClaimedQuietRuns(claimed);
+    expect(engine.isQuietClaimed(b)).toBe(false);
+    expect(tb.roots.store.getSummary(b)).toBeTruthy();
+    // and the next sweep picks up the run the failed mark left running
+    expect(engine.claimQuietRuns(30 * 60_000)).toEqual([c]);
   }, 30_000);
 
   it("skips a claimed run that already ended normally", async () => {
