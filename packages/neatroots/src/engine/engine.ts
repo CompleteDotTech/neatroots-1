@@ -1081,7 +1081,7 @@ ${library}`;
   claimQuietRuns(quietMs = QUIET_RUN_MS, now = Date.now()): string[] {
     const cutoff = now - quietMs;
     const claimed: string[] = [];
-    for (const run of this.roots.store.quietRuns(quietMs, now).slice(0, QUIET_CLAIM_BATCH)) {
+    for (const run of this.roots.store.quietRuns(quietMs, now, QUIET_CLAIM_BATCH)) {
       // Only claim when this sweep actually marked the run - an overlapping sweep
       // that already claimed it must not repeat the end-of-run model calls.
       if (this.roots.store.markRunInterrupted(run.trace_id, "no end received", cutoff)) {
