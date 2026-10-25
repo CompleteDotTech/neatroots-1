@@ -91,3 +91,26 @@ describe("retention keeps the server answering", () => {
     expect(st.getRun(ids[2])).toBeUndefined(); // the next oldest went as usual
   });
 });
+
+// Review on #674: payloads used to be reclaimed only at the end of the sweep, so after an age sweep
+// removed runs with big payloads, the size check still counted those files and trimmed more runs.
+it("frees an age sweep's payloads before measuring for the size cap", () => {
+  const st = trackedStore(path.join(home(), "data"));
+  const recent: string[] = [];
+  for (let i = 0; i < 20; i++) {
+    const t = hex(16);
+    recent.push(t);
+    st.ingest([batch([span({ traceId: t, spanId: hex(8), name: `recent ${i}`, kind: "workflow", attrs: [s("input.value", words(200))] })])]);
+  }
+  const recentBytes = st.storedBytes(); // no payload files yet
+  const aged = Date.now() - 60 * 86_400_000;
+  for (let i = 0; i < 10; i++) {
+    const t = hex(16);
+    st.ingest([batch([span({ traceId: t, spanId: hex(8), name: `old ${i}`, kind: "workflow", attrs: [s("input.value", words(20_000))] })])]); // over the blob threshold
+    st.db.prepare("UPDATE runs SET received_ms = ?, ended_ms = ? WHERE trace_id = ?").run(aged, aged, t);
+  }
+  // Over the cap while the old runs' files are still counted, under it once they're gone.
+  const removed = st.sweep(14, Math.floor(recentBytes + st.blobs.size() / 2));
+  expect(removed).toBe(10); // the 10 old runs, and no recent one to make room for files already gone
+  expect(recent.every((t) => st.getRun(t))).toBe(true);
+});

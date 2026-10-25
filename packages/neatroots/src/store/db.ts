@@ -1416,6 +1416,9 @@ export class Store {
         .all(cutoff) as { trace_id: string }[];
       yield* remove(old.map((r) => r.trace_id));
       logsRemoved += deleteUnattachedLogsBefore(this.db, cutoff);
+      // Free those runs' payloads now: the size check below counts the files on disk, and would
+      // otherwise trim more runs to make room that's already free.
+      this.reclaimUnreferencedBlobs(shas.splice(0));
       yield;
     }
     // Measure what the database holds, not the file size: SQLite keeps the file (and WAL) at its

@@ -100,7 +100,10 @@ export class Roots {
     // The sweep works a few runs at a time between turns of the event loop, so the server keeps
     // answering during a large trim (#429). One sweep at a time: an hourly one waits for the last.
     const run = () => {
-      if (this.sweeping) return;
+      if (this.sweeping) {
+        log.info("retention: the last sweep is still running, so this hour's is skipped");
+        return;
+      }
       this.sweeping = this.store
         .sweepAsync(this.config.retention.days, this.config.retention.maxGb * 1024 ** 3)
         .then((removed) => {
