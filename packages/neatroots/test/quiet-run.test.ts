@@ -300,14 +300,16 @@ describe("quiet-run sweep at startup (issue #673)", () => {
     };
     const b = mk();
     const c = mk();
+    const d = mk();
     engine.progress.checking(b);
     engine.progress.checking(c);
+    engine.progress.checking(d);
     tb.roots.store.db
-      .prepare("UPDATE runs SET updated_ms = ? WHERE trace_id IN (?, ?)")
-      .run(Date.now() - 31 * 60_000, b, c);
+      .prepare("UPDATE runs SET updated_ms = ? WHERE trace_id IN (?, ?, ?)")
+      .run(Date.now() - 31 * 60_000, b, c, d);
 
     const claimed = engine.claimQuietRuns(30 * 60_000);
-    expect([...claimed].sort()).toEqual([b, c].sort());
+    expect([...claimed].sort()).toEqual([b, c, d].sort());
 
     const calls: string[] = [];
     const orig = engine.recheck.bind(engine);
@@ -315,14 +317,19 @@ describe("quiet-run sweep at startup (issue #673)", () => {
       calls.push(id);
       return orig(id, opts);
     };
-    // b's real end lands after the claim and its live entry is already gone (releaseLive),
-    // so only the persisted row can tell the sweep it ended normally
-    (engine as unknown as { live: Map<string, unknown> }).live.delete(b);
+    // b and d's real ends land after the claim and their live entries are already gone
+    // (releaseLive), so only the persisted rows can tell the sweep they ended - one
+    // normally, one with an error; both keep their own end pass
+    const live = (engine as unknown as { live: Map<string, unknown> }).live;
+    live.delete(b);
+    live.delete(d);
     tb.roots.store.db.prepare("UPDATE runs SET status = 'ok' WHERE trace_id = ?").run(b);
+    tb.roots.store.db.prepare("UPDATE runs SET status = 'error' WHERE trace_id = ?").run(d);
 
     await engine.recheckClaimedQuietRuns(claimed);
     expect(calls).toEqual([c]);
     expect(engine.isQuietClaimed(b)).toBe(false);
     expect(engine.isQuietClaimed(c)).toBe(false);
+    expect(engine.isQuietClaimed(d)).toBe(false);
   }, 30_000);
 });
