@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it } from "vitest";
-import { batch, hex, llmSpan, makeRoots, markerSpan, mockLlm, toolSpan } from "./helpers.js";
+import { resumeUnfinished } from "../src/engine/engine.js";
+import { batch, hex, llmSpan, makeRoots, markerSpan, mockLlm, span, toolSpan, until } from "./helpers.js";
 
 const cleanup: (() => Promise<void>)[] = [];
 afterEach(async () => {
@@ -128,4 +129,76 @@ describe("quiet runs (issue #213)", () => {
     expect(row.termination_reason).toBeNull();
     expect(row.status).not.toBe("interrupted");
   });
+});
+
+describe("quiet-run sweep at startup (issue #673)", () => {
+  it("lists quiet runs through its own index instead of scanning runs", async () => {
+    const tb = await makeRoots({});
+    cleanup.push(async () => {
+      await tb.close();
+    });
+    const plan = tb.roots.store.db
+      .prepare("EXPLAIN QUERY PLAN SELECT * FROM runs WHERE status = 'running' AND doctor = 0 AND complete = 0 AND updated_ms < ?")
+      .all(0) as { detail: string }[];
+    expect(plan.map((r) => r.detail).join(" | ")).toContain("runs_quiet");
+  });
+
+  it("startup recovery resumes unrelated runs while a quiet run's recheck is still working", async () => {
+    const llm = await mockLlm({ yesWhen: [] });
+    const tb = await makeRoots({ llmUrl: llm.url });
+    cleanup.push(async () => {
+      await tb.close();
+      await llm.close();
+    });
+    const engine = tb.roots.engine!;
+
+    // an unrelated run that ended normally, and a run that went quiet
+    const a = hex(16);
+    const rootA = hex(8);
+    tb.roots.ingest([
+      batch([
+        llmSpan(a, rootA, { user: "refund order 4512" }),
+        toolSpan(a, rootA, "lookup_order", '{"order_id":"4512"}'),
+        span({ traceId: a, spanId: rootA, name: "refund", kind: "workflow" }),
+        markerSpan(a, rootA),
+      ]),
+    ]);
+    const b = hex(16);
+    const rootB = hex(8);
+    tb.roots.ingest([batch([llmSpan(b, rootB, { user: "long running thing" })])]);
+
+    // let the ended run's live check work settle, then leave both runs the way a crash would:
+    // checks outstanding. the quiet run's live work never settles on its own - it has no end.
+    await until(() => engine.progress.state(a) === undefined, 15_000);
+    engine.progress.checking(a);
+    engine.progress.checking(b);
+    tb.roots.store.db.prepare("UPDATE runs SET updated_ms = ? WHERE trace_id = ?").run(Date.now() - 31 * 60_000, b);
+
+    const claimed = engine.claimQuietRuns(30 * 60_000);
+    expect(claimed).toEqual([b]);
+    expect(tb.roots.store.getRun(b)!.status).toBe("interrupted");
+
+    // the quiet run's recheck is slow - parked here until the test lets it through
+    let release!: () => void;
+    const gate = new Promise<void>((r) => (release = r));
+    const orig = engine.recheck.bind(engine);
+    (engine as unknown as { recheck: (id: string, opts?: { resume?: boolean }) => Promise<void> }).recheck = async (id, opts) => {
+      if (id === b) await gate;
+      return orig(id, opts);
+    };
+    const bg = engine.recheckClaimedQuietRuns(claimed);
+
+    // unrelated startup recovery goes ahead and finishes while the quiet recheck is still parked
+    const resumed = await resumeUnfinished(engine, tb.roots);
+    expect(resumed).toBe(1);
+    expect(engine.progress.state(a)).toBeUndefined();
+    expect(engine.isQuietClaimed(b)).toBe(true);
+
+    release();
+    await bg;
+    expect(engine.isQuietClaimed(b)).toBe(false);
+    expect(engine.progress.state(b)).toBeUndefined();
+    expect(tb.roots.store.getSummary(a)).toBeTruthy();
+    expect(tb.roots.store.getSummary(b)).toBeTruthy();
+  }, 30_000);
 });

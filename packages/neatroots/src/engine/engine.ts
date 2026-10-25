@@ -1063,14 +1063,46 @@ ${library}`;
    * forever (issue #213). Runs at startup and on a timer; resumeUnfinished then treats these
    * like any other ended run.
    */
-  async endQuietRuns(quietMs = QUIET_RUN_MS): Promise<void> {
-    const now = Date.now();
+  /** Ids a quiet-run sweep claimed and has not finished rechecking, so startup recovery leaves them to the sweep (issue #673). */
+  private readonly quietClaimed = new Set<string>();
+
+  /**
+   * Marks quiet runs interrupted and returns the ids this sweep claimed, without rechecking them
+   * yet. Claiming is one fast database pass, so a startup can finish it before resuming unrelated
+   * recovery work instead of waiting on one model recheck per old quiet run (issue #673).
+   */
+  claimQuietRuns(quietMs = QUIET_RUN_MS, now = Date.now()): string[] {
     const cutoff = now - quietMs;
+    const claimed: string[] = [];
     for (const run of this.roots.store.quietRuns(quietMs, now)) {
-      // Only recheck when this sweep actually marked the run - an overlapping sweep
+      // Only claim when this sweep actually marked the run - an overlapping sweep
       // that already claimed it must not repeat the end-of-run model calls.
-      if (this.roots.store.markRunInterrupted(run.trace_id, "no end received", cutoff)) await this.recheck(run.trace_id, { resume: true });
+      if (this.roots.store.markRunInterrupted(run.trace_id, "no end received", cutoff)) {
+        claimed.push(run.trace_id);
+        this.quietClaimed.add(run.trace_id);
+      }
     }
+    return claimed;
+  }
+
+  /** Rechecks the runs a claimQuietRuns call marked, one at a time. */
+  async recheckClaimedQuietRuns(ids: string[]): Promise<void> {
+    for (const id of ids) {
+      try {
+        await this.recheck(id, { resume: true });
+      } finally {
+        this.quietClaimed.delete(id);
+      }
+    }
+  }
+
+  /** True while a quiet-run sweep is rechecking the run it claimed. */
+  isQuietClaimed(traceId: string): boolean {
+    return this.quietClaimed.has(traceId);
+  }
+
+  async endQuietRuns(quietMs = QUIET_RUN_MS): Promise<void> {
+    await this.recheckClaimedQuietRuns(this.claimQuietRuns(quietMs));
   }
 
   private async handleEnd(run: LiveRun): Promise<void> {
@@ -1334,6 +1366,8 @@ const RESUME_LIMIT = 200;
 export async function resumeUnfinished(engine: Engine, roots: Roots): Promise<number> {
   const ids = engine.progress.unfinished();
   const ended = ids.filter((id) => {
+    // A quiet-run sweep claimed this run and is rechecking it: leave it to the sweep (issue #673).
+    if (engine.isQuietClaimed(id)) return false;
     const r = roots.store.getRun(id);
     if (!r) engine.progress.done(id);
     return !!r && r.status !== "running";

@@ -71,6 +71,8 @@ CREATE TABLE IF NOT EXISTS runs (
 CREATE INDEX IF NOT EXISTS runs_started ON runs (started_ms DESC);
 -- The run list and Insights sort and filter by this expression; an index on started_ms alone can't serve them.
 CREATE INDEX IF NOT EXISTS runs_sort ON runs (COALESCE(started_ms, received_ms) DESC);
+-- The quiet-run sweep filters on exactly these columns every 60 s (issue #673).
+CREATE INDEX IF NOT EXISTS runs_quiet ON runs (status, doctor, complete, updated_ms);
 CREATE INDEX IF NOT EXISTS runs_session ON runs (session_id);
 CREATE INDEX IF NOT EXISTS runs_workflow ON runs (workflow);
 CREATE INDEX IF NOT EXISTS runs_project ON runs (project);
