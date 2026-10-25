@@ -324,6 +324,83 @@ describe("quiet-run sweep at startup (issue #673)", () => {
     expect(tb.roots.store.getSummary(c)).toBeTruthy();
   }, 30_000);
 
+  it("recovers a crashed sweep's abandoned claims on a later sweep", async () => {
+    const llm = await mockLlm({ yesWhen: [] });
+    const tb = await makeRoots({ llmUrl: llm.url });
+    cleanup.push(async () => {
+      await tb.close();
+      await llm.close();
+    });
+    const engine = tb.roots.engine!;
+
+    // the way a crash leaves a claimed run behind: interrupted by the sweep, no owner, no
+    // outstanding progress row for resumeUnfinished to find
+    const b = hex(16);
+    tb.roots.ingest([batch([llmSpan(b, hex(8), { user: "quiet run" })])]);
+    // no outstanding progress row, the way a crash leaves a run whose checks had settled
+    engine.progress.checking(b);
+    engine.progress.done(b);
+    tb.roots.store.db
+      .prepare("UPDATE runs SET status = 'interrupted', interrupted = 1, termination_reason = 'no end received', updated_ms = ? WHERE trace_id = ?")
+      .run(Date.now() - 31 * 60_000, b);
+
+    // a normal quiet run for the claim pass
+    const c = hex(16);
+    tb.roots.ingest([batch([llmSpan(c, hex(8), { user: "quiet run" })])]);
+    engine.progress.checking(c);
+    tb.roots.store.db
+      .prepare("UPDATE runs SET updated_ms = ? WHERE trace_id = ?")
+      .run(Date.now() - 31 * 60_000, c);
+
+    await engine.endQuietRuns(30 * 60_000);
+    // both got their end-of-run pass: the freshly claimed run and the abandoned one
+    expect(tb.roots.store.getSummary(c)).toBeTruthy();
+    expect(tb.roots.store.getSummary(b)).toBeTruthy();
+    expect(engine.isQuietClaimed(b)).toBe(false);
+    expect(engine.isQuietClaimed(c)).toBe(false);
+  }, 30_000);
+
+  it("leaves an abandoned claim to the sweep that already owns it", async () => {
+    const llm = await mockLlm({ yesWhen: [] });
+    const tb = await makeRoots({ llmUrl: llm.url });
+    cleanup.push(async () => {
+      await tb.close();
+      await llm.close();
+    });
+    const engine = tb.roots.engine!;
+
+    const b = hex(16);
+    tb.roots.ingest([batch([llmSpan(b, hex(8), { user: "quiet run" })])]);
+    engine.progress.checking(b);
+    tb.roots.store.db
+      .prepare("UPDATE runs SET updated_ms = ? WHERE trace_id = ?")
+      .run(Date.now() - 31 * 60_000, b);
+
+    const claimed = engine.claimQuietRuns(30 * 60_000);
+    expect(claimed).toEqual([b]);
+
+    // park b's recheck mid-flight, then run the periodic sweep: it must not recheck b again
+    let release!: () => void;
+    const gate = new Promise<void>((r) => (release = r));
+    const calls: string[] = [];
+    const orig = engine.recheck.bind(engine);
+    (engine as unknown as { recheck: (id: string, opts?: { resume?: boolean }) => Promise<void> }).recheck = async (id, opts) => {
+      calls.push(id);
+      if (id === b) await gate;
+      return orig(id, opts);
+    };
+    const bg = engine.recheckClaimedQuietRuns(claimed);
+    await until(() => calls.includes(b), 15_000);
+
+    await engine.endQuietRuns(30 * 60_000);
+    expect(calls.filter((id) => id === b)).toHaveLength(1);
+
+    release();
+    await bg;
+    expect(calls.filter((id) => id === b)).toHaveLength(1);
+    expect(engine.isQuietClaimed(b)).toBe(false);
+  }, 30_000);
+
   it("stops claiming at a failed mark and still rechecks the runs it claimed", async () => {
     const llm = await mockLlm({ yesWhen: [] });
     const tb = await makeRoots({ llmUrl: llm.url });

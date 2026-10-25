@@ -1137,6 +1137,14 @@ ${library}`;
 
   async endQuietRuns(quietMs = QUIET_RUN_MS): Promise<void> {
     await this.recheckClaimedQuietRuns(this.claimQuietRuns(quietMs));
+    // Rows a crashed sweep or a failed restore left interrupted: no live sweep owns them, so
+    // this one takes them back. A row whose recheck is still running sits in quietClaimed and
+    // is left to it.
+    const abandoned = this.roots.store.abandonedQuietRuns(QUIET_CLAIM_BATCH).filter((r) => !this.quietClaimed.has(r.trace_id));
+    if (abandoned.length) {
+      for (const r of abandoned) this.quietClaimed.add(r.trace_id);
+      await this.recheckClaimedQuietRuns(abandoned.map((r) => r.trace_id));
+    }
   }
 
   private async handleEnd(run: LiveRun): Promise<void> {

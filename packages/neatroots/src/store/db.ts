@@ -816,6 +816,17 @@ export class Store {
   }
 
   /**
+   * Runs a quiet-run sweep interrupted ("no end received") that no live sweep owns: a crashed
+   * sweep's leftovers, or a claimed run whose post-failure restore itself failed. Rechecking
+   * them is safe to repeat - recheck with resume skips the decisions already persisted.
+   */
+  abandonedQuietRuns(limit: number): RunRow[] {
+    return this.db
+      .prepare("SELECT * FROM runs WHERE status = 'interrupted' AND termination_reason = 'no end received' ORDER BY updated_ms ASC LIMIT ?")
+      .all(limit) as RunRow[];
+  }
+
+  /**
    * Puts a sweep-claimed quiet run back the way the sweep found it, so the next sweep retries
    * it after its recheck failed. Only a row this sweep interrupted ("no end received") is
    * restored - a run interrupted any other way is left alone. The mark bumped updated_ms, so
