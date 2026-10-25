@@ -52,6 +52,37 @@ export function* compactSearchIndex(db: Database.Database, pages = 64): Steps<vo
   }
 }
 
+/**
+ * Deletes the payload files among `candidates` that no span references any more, without one long
+ * scan: spans are checked by `seq` range, `chunk` writes at a time, yielding between ranges. Every
+ * span write (a new span or a re-sent one) takes the next seq, so the spans written while it scans
+ * are exactly those after the seq it started at; they are checked, and the files deleted, in one
+ * last step that nothing can interleave with. Returns how many files went.
+ */
+export function* reclaimPayloads(db: Database.Database, blobs: BlobStore, candidates: Iterable<string>, lastSeq: () => number, chunk = 5_000): Steps<number> {
+  const shas = [...new Set(candidates)];
+  if (!shas.length) return 0;
+  const want = JSON.stringify(shas);
+  const refs = db.prepare(
+    `SELECT DISTINCT j.value AS sha FROM spans, json_each(CASE WHEN json_valid(spans.blobs) THEN spans.blobs ELSE '[]' END) AS j
+     WHERE spans.seq > ? AND spans.seq <= ? AND spans.blobs IS NOT NULL AND j.value IN (SELECT value FROM json_each(?))`,
+  );
+  const used = new Set<string>();
+  const start = lastSeq();
+  for (let from = 0; from < start; from += chunk) {
+    for (const r of refs.all(from, Math.min(from + chunk, start), want) as { sha: string }[]) used.add(r.sha);
+    yield;
+  }
+  for (const r of refs.all(start, Number.MAX_SAFE_INTEGER, want) as { sha: string }[]) used.add(r.sha);
+  let n = 0;
+  for (const sha of shas) {
+    if (used.has(sha)) continue;
+    blobs.delete(sha);
+    n++;
+  }
+  return n;
+}
+
 const ROW_BYTES = `octet_length(s.attributes) + octet_length(s.events) + octet_length(s.links) + IFNULL(octet_length(s.extra), 0) + IFNULL(octet_length(s.input_preview), 0) + IFNULL(octet_length(s.output_preview), 0) + octet_length(s.name)`;
 
 /**

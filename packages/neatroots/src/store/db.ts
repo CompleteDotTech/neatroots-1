@@ -2,7 +2,7 @@ import fs from "node:fs";
 import path from "node:path";
 import Database from "better-sqlite3";
 import { BlobStore } from "./blobs.js";
-import { compactSearchIndex, oldestRunsCovering, runSteps, runStepsAsync, type Steps } from "./retention.js";
+import { compactSearchIndex, oldestRunsCovering, reclaimPayloads, runSteps, runStepsAsync, type Steps } from "./retention.js";
 import { deleteUnattachedLogsBefore, trimUnattachedLogs } from "./unattached-logs.js";
 import { SearchIds } from "./search-ids.js";
 import { sha256, newId } from "../util/ids.js";
@@ -1397,13 +1397,18 @@ export class Store {
     const startedMs = Date.now();
     let removed = 0;
     let logsRemoved = 0;
-    const shas: string[] = [];
+    const shas = new Set<string>();
     const self = this;
+    // Only a stepped sweep yields, so only it needs the guard against runs that changed meanwhile.
+    const notAfter = Number.isFinite(batch) ? startedMs : undefined;
     function* remove(ids: string[]): Steps<void> {
-      for (let i = 0; i < ids.length; i += batch) {
-        const r = self.deleteRunRows(ids.slice(i, i + batch), startedMs);
+      // Until the search index's run ids are filled in, every delete scans the whole index, so
+      // delete in one go then rather than repeat that scan per batch.
+      const step = self.searchIds.ready ? batch : Number.POSITIVE_INFINITY;
+      for (let i = 0; i < ids.length; i += step) {
+        const r = self.deleteRunRows(ids.slice(i, i + step), notAfter);
         removed += r.removed;
-        shas.push(...r.shas);
+        for (const sha of r.shas) shas.add(sha);
         yield;
       }
     }
@@ -1418,8 +1423,8 @@ export class Store {
       logsRemoved += deleteUnattachedLogsBefore(this.db, cutoff);
       // Free those runs' payloads now: the size check below counts the files on disk, and would
       // otherwise trim more runs to make room that's already free.
-      this.reclaimUnreferencedBlobs(shas.splice(0));
-      yield;
+      yield* reclaimPayloads(this.db, this.blobs, shas, () => this.seq);
+      shas.clear();
     }
     // Measure what the database holds, not the file size: SQLite keeps the file (and WAL) at its
     // high-water mark after a delete and reuses the freed pages, so the file size never drops
@@ -1448,8 +1453,8 @@ export class Store {
       const oldest = yield* oldestRunsCovering(this.db, this.blobs, this.searchIds.ready, size - maxBytes * RETENTION_LOW_WATER, size);
       yield* remove(oldest);
     }
-    // Payloads only once, at the end, checked against every span then (new ones included).
-    this.reclaimUnreferencedBlobs(shas);
+    // The size trim's payloads, checked against every span then (new ones included).
+    yield* reclaimPayloads(this.db, this.blobs, shas, () => this.seq);
     if (removed || logsRemoved) this.db.pragma("wal_checkpoint(TRUNCATE)");
     return removed;
   }
@@ -1498,7 +1503,7 @@ export class Store {
     return this.db.transaction(() => {
       let list = traceIds;
       if (notAfter !== undefined) {
-        list = (this.db.prepare(`SELECT trace_id FROM runs WHERE ${inIds} AND pinned = 0 AND updated_ms <= ?`).all(JSON.stringify(traceIds), notAfter) as { trace_id: string }[]).map((r) => r.trace_id);
+        list = (this.db.prepare(`SELECT trace_id FROM runs WHERE ${inIds} AND pinned = 0 AND updated_ms < ?`).all(JSON.stringify(traceIds), notAfter) as { trace_id: string }[]).map((r) => r.trace_id);
         if (!list.length) return { removed: 0, shas: [] };
       }
       const ids = JSON.stringify(list);

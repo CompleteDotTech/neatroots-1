@@ -114,3 +114,46 @@ it("frees an age sweep's payloads before measuring for the size cap", () => {
   expect(removed).toBe(10); // the 10 old runs, and no recent one to make room for files already gone
   expect(recent.every((t) => st.getRun(t))).toBe(true);
 });
+
+// Review on #674 (CodeRabbit): reclaiming payloads scanned every span in one go. It now scans in
+// seq ranges between turns of the event loop; a span written meanwhile must still keep its file.
+it("keeps a payload that a span written during the reference scan uses", async () => {
+  const { reclaimPayloads } = await import("../src/store/retention.js");
+  const st = trackedStore(path.join(home(), "data"));
+  const big = words(20_000); // over the blob threshold
+  const t = hex(16);
+  st.ingest([batch([span({ traceId: t, spanId: hex(8), name: "old", kind: "workflow", attrs: [s("input.value", big)] })])]);
+  for (let i = 0; i < 30; i++) st.ingest([batch([span({ traceId: hex(16), spanId: hex(8), name: `filler ${i}`, kind: "workflow" })])]);
+  const sha = (st.db.prepare("SELECT j.value AS sha FROM spans, json_each(spans.blobs) AS j WHERE trace_id = ?").get(t) as { sha: string }).sha;
+  st.deleteRun(t); // its file goes with it
+  const file = st.blobs.files().find((f) => f.sha === sha);
+  expect(file).toBeUndefined();
+  // Put it back unreferenced, then reclaim it while another span starts using it partway through.
+  st.ingest([batch([span({ traceId: hex(16), spanId: hex(8), name: "first", kind: "workflow", attrs: [s("input.value", big)] })])]);
+  st.db.prepare("DELETE FROM spans WHERE name = 'first'").run(); // a reference gone, file still there
+  const lastSeq = () => (st.db.prepare("SELECT MAX(seq) AS s FROM spans").get() as { s: number }).s;
+  const steps = reclaimPayloads(st.db, st.blobs, [sha], lastSeq, 5);
+  steps.next(); // the first seq range is checked
+  st.ingest([batch([span({ traceId: hex(16), spanId: hex(8), name: "second", kind: "workflow", attrs: [s("input.value", big)] })])]);
+  let r = steps.next();
+  while (!r.done) r = steps.next();
+  expect(r.value).toBe(0);
+  expect(st.blobs.files().some((f) => f.sha === sha)).toBe(true);
+});
+
+it("deletes in one go while the search index's run ids aren't filled in", async () => {
+  const st = trackedStore(path.join(home(), "data"));
+  fill(st, 30);
+  (st as unknown as { searchIds: { ready: boolean } }).searchIds.ready = false;
+  const cap = Math.floor(st.storedBytes() * 0.5);
+  let scans = 0;
+  const orig = st.db.prepare.bind(st.db);
+  st.db.prepare = ((sql: string) => {
+    if (/^DELETE FROM span_fts WHERE trace_id/.test(sql)) scans++;
+    return orig(sql);
+  }) as typeof st.db.prepare;
+  const removed = await st.sweepAsync(999_999, cap, { sliceMs: 0 });
+  st.db.prepare = orig;
+  expect(removed).toBeGreaterThan(4);
+  expect(scans).toBe(1); // was one full index scan per 4 runs
+});
