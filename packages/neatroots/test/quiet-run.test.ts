@@ -241,4 +241,44 @@ describe("quiet-run sweep at startup (issue #673)", () => {
     expect(engine.isQuietClaimed(c)).toBe(false);
     expect(tb.roots.store.getSummary(c)).toBeTruthy();
   }, 30_000);
+
+  it("skips a claimed run that already ended normally", async () => {
+    const llm = await mockLlm({ yesWhen: [] });
+    const tb = await makeRoots({ llmUrl: llm.url });
+    cleanup.push(async () => {
+      await tb.close();
+      await llm.close();
+    });
+    const engine = tb.roots.engine!;
+
+    const mk = () => {
+      const t = hex(16);
+      tb.roots.ingest([batch([llmSpan(t, hex(8), { user: "quiet run" })])]);
+      return t;
+    };
+    const b = mk();
+    const c = mk();
+    engine.progress.checking(b);
+    engine.progress.checking(c);
+    tb.roots.store.db
+      .prepare("UPDATE runs SET updated_ms = ? WHERE trace_id IN (?, ?)")
+      .run(Date.now() - 31 * 60_000, b, c);
+
+    const claimed = engine.claimQuietRuns(30 * 60_000);
+    expect([...claimed].sort()).toEqual([b, c].sort());
+
+    const calls: string[] = [];
+    const orig = engine.recheck.bind(engine);
+    (engine as unknown as { recheck: (id: string, opts?: { resume?: boolean }) => Promise<void> }).recheck = async (id, opts) => {
+      calls.push(id);
+      return orig(id, opts);
+    };
+    // b's real end arrives after the sweep claimed it
+    (engine as unknown as { live: Map<string, { ended: boolean }> }).live.get(b)!.ended = true;
+
+    await engine.recheckClaimedQuietRuns(claimed);
+    expect(calls).toEqual([c]);
+    expect(engine.isQuietClaimed(b)).toBe(false);
+    expect(engine.isQuietClaimed(c)).toBe(false);
+  }, 30_000);
 });

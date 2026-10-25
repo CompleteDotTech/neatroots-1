@@ -1096,6 +1096,9 @@ ${library}`;
   async recheckClaimedQuietRuns(ids: string[]): Promise<void> {
     for (const id of ids) {
       try {
+        // A run that ended normally after the claim keeps its own end pass; rechecking it
+        // here would rebuild its live state and run a second one.
+        if (this.live.get(id)?.ended) continue;
         await this.recheck(id, { resume: true });
       } catch (err) {
         // One failed recheck must not strand the rest of the batch: the remaining ids are
