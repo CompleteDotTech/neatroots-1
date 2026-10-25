@@ -1379,6 +1379,11 @@ export class Store {
 
   // --------------------------------------------------------------- retention
 
+  /** Whether the search index's run ids are filled in, so runs can be found in it without a scan. */
+  get searchReady(): boolean {
+    return this.searchIds.ready;
+  }
+
   /** Deletes the oldest unpinned runs past the age or size limit, in one go. Returns how many runs were removed. */
   sweep(maxAgeDays: number, maxBytes: number): number {
     return runSteps(this.sweepSteps(maxAgeDays, maxBytes, Number.POSITIVE_INFINITY));

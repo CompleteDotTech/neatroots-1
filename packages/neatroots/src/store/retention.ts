@@ -109,11 +109,20 @@ export function* oldestRunsCovering(db: Database.Database, blobs: BlobStore, ind
     yield;
   }
   if (!indexByRun) {
-    for (const r of db.prepare("SELECT trace_id AS t, SUM(octet_length(name) + octet_length(tool_name) + octet_length(body)) AS f FROM span_fts GROUP BY trace_id").all() as { t: string; f: number | null }[]) {
-      const i = at.get(r.t);
-      if (i !== undefined) rows[i].w += r.f ?? 0;
+    // Read the whole index in rowid order, 1,000 rows at a time. FTS5 ignores a REAL rowid bound
+    // (and better-sqlite3 binds JS numbers as REAL), so the bound is a BigInt.
+    const scan = db.prepare("SELECT rowid AS id, trace_id AS t, octet_length(name) + octet_length(tool_name) + octet_length(body) AS f FROM span_fts WHERE rowid > ? ORDER BY rowid LIMIT 1000");
+    scan.safeIntegers(true);
+    for (let after = 0n; ; ) {
+      const page = scan.all(after) as { id: bigint; t: string; f: bigint | null }[];
+      for (const r of page) {
+        const i = at.get(r.t);
+        if (i !== undefined) rows[i].w += Number(r.f ?? 0n);
+      }
+      yield;
+      if (page.length < 1000) break;
+      after = page[page.length - 1].id;
     }
-    yield;
   }
   const shas = rows.map((r) => (r.b ? [...new Set(r.b.match(/[0-9a-f]{64}/g) ?? [])] : []));
   const lastRef = new Map<string, number>();

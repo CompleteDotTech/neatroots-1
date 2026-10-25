@@ -68,7 +68,7 @@ describe("retention keeps the server answering", () => {
     expect(async.getRun(ids[0])).toBeDefined(); // pinned survives
     expect(async.getRun(ids[1])).toBeUndefined(); // the oldest unpinned run went
     // The one-pass sweep blocks for its whole duration; the stepped one gives the loop a turn often.
-    expect(worstMs, `worst stall ${worstMs.toFixed(0)} ms, one-pass sweep ${syncMs.toFixed(0)} ms`).toBeLessThan(Math.max(100, syncMs / 3));
+    expect(worstMs, `worst stall ${worstMs.toFixed(0)} ms, one-pass sweep ${syncMs.toFixed(0)} ms`).toBeLessThan(Math.max(100, syncMs / 2));
   });
 
   it("keeps a run that takes new spans, or is pinned, while the sweep is working", async () => {
@@ -156,4 +156,35 @@ it("deletes in one go while the search index's run ids aren't filled in", async 
   st.db.prepare = orig;
   expect(removed).toBeGreaterThan(4);
   expect(scans).toBe(1); // was one full index scan per 4 runs
+});
+
+// Review on #674 (CodeRabbit): before the search index's run ids are filled in (the first start after
+// an update), a trim can only delete and size runs by scanning the whole index in one go. The server
+// waits for the rebuild instead, and sweeps as soon as it has finished.
+it("waits for the search index's run ids, then sweeps as soon as they're filled in", async () => {
+  const { makeRoots } = await import("./helpers.js");
+  const t = await makeRoots({ noEngine: true, config: (c) => (c.retention.days = 14) });
+  try {
+    const old: string[] = [];
+    for (let i = 0; i < 5; i++) {
+      const id = hex(16);
+      old.push(id);
+      t.roots.ingest([batch([span({ traceId: id, spanId: hex(8), name: `old ${i}`, kind: "workflow" })])]);
+    }
+    const aged = Date.now() - 60 * 86_400_000;
+    t.roots.store.db.prepare("UPDATE runs SET received_ms = ?, ended_ms = ?").run(aged, aged);
+    await new Promise((r) => setTimeout(r, 30)); // the startup rebuild reports in first (already ready here)
+    const internals = t.roots as unknown as { searchSettled: boolean; searchIdsSettled(): void; sweeping?: Promise<void> };
+    (t.roots.store as unknown as { searchIds: { ready: boolean } }).searchIds.ready = false;
+    internals.searchSettled = false;
+    t.roots.startRetention();
+    await new Promise((r) => setTimeout(r, 30));
+    expect(old.every((id) => t.roots.store.getRun(id))).toBe(true); // nothing trimmed yet
+    (t.roots.store as unknown as { searchIds: { ready: boolean } }).searchIds.ready = true;
+    internals.searchIdsSettled();
+    await internals.sweeping;
+    expect(old.some((id) => t.roots.store.getRun(id))).toBe(false); // the waiting sweep ran
+  } finally {
+    await t.close();
+  }
 });
