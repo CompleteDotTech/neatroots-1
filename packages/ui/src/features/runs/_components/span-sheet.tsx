@@ -32,6 +32,7 @@ function KeyValues({ entries }: { entries: [string, unknown][] }) {
 }
 
 /** One span in a side sheet: why it matters, what went in and what came out. The body scrolls. */
+/** Show the selected span details, including failures and abandoned streams. */
 export function SpanSheet({
   traceId,
   spanId,

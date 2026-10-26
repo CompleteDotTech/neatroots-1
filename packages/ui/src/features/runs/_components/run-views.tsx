@@ -13,6 +13,7 @@ export const RUN_VIEWS: RunView[] = ["overview", "trace", "timeline", "conversat
  * One run, four ways: as a conversation, as the span tree, on a time axis, and as one turn of
  * its session. A box of fixed height; each view scrolls inside it.
  */
+/** Render the selected run view with its span statuses and selection state. */
 export function RunViews({
   traceId,
   spans,

@@ -151,6 +151,7 @@ export interface ForkHandlers {
  * The run as a conversation: what the user asked, what the model answered, the tools it called,
  * and sub-agents as cards you can open. Edit a user message to fork the run from there.
  */
+/** Render conversation turns with status labels from their recorded spans. */
 export function ChatView({ traceId, spans, onOpenSpan, fork }: { spans: Span[]; traceId: string; onOpenSpan: (id: string) => void; fork?: ForkHandlers }) {
   const [path, setPath] = useState<{ id: string; name: string }[]>([]);
   const spansById = useMemo(() => new Map(spans.map((span) => [span.span_id, span])), [spans]);

@@ -28,6 +28,7 @@ function ticks(total: number): number[] {
  * The run on a time axis, one row per span in tree order: where time went, what ran in
  * parallel, and what waited. Zoom stretches the axis; the box scrolls both ways.
  */
+/** Plot span durations with shared status labels and selection controls. */
 export function TimelineView({ spans, flagged, selected, onSelect }: { spans: Span[]; flagged: Set<string>; selected?: string; onSelect: (id: string) => void }) {
   const rows = useMemo(() => treeOrder(spans), [spans]);
   const [zoom, setZoom] = useState(1);

@@ -53,6 +53,7 @@ export function treeOrder(spans: Span[]): { span: Span; depth: number }[] {
  * The run's steps as a tree, like the Neatlogs trace view: kind, name, a small timing bar and
  * the duration. Fills its box and scrolls; a dot marks evidence for an open problem.
  */
+/** Render the ordered span tree with shared status labels and selection controls. */
 export function TraceTree({ spans, flagged, selected, onSelect }: { spans: Span[]; flagged: Set<string>; selected?: string; onSelect: (id: string) => void }) {
   const rows = useMemo(() => treeOrder(spans), [spans]);
   const start = Math.min(...spans.map((s) => s.start_ms));
