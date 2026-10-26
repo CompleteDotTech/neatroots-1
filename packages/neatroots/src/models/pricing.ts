@@ -74,17 +74,21 @@ export function priceCall(a: Record<string, unknown>, overrides: Price[] = []): 
   // Explicit nonstandard billing cannot be priced from the standard list table.
   const tier = first(a, ["gen_ai.request.service_tier", "openai.service_tier", "neatlogs.llm.service_tier"]);
   if (tier !== undefined && tier !== "default" && tier !== "standard") return result;
-  const input = count(first(a, ["neatlogs.llm.token_count.prompt", "gen_ai.usage.input_tokens", "gen_ai.usage.prompt_tokens", "llm.token_count.prompt", "ai.usage.promptTokens", "ai.usage.inputTokens"]));
+  const inputKey = ["neatlogs.llm.token_count.prompt", "gen_ai.usage.input_tokens", "gen_ai.usage.prompt_tokens", "llm.token_count.prompt", "ai.usage.promptTokens", "ai.usage.inputTokens"].find((key) => Object.hasOwn(a, key));
+  const input = count(inputKey === undefined ? undefined : a[inputKey]);
   const output = count(first(a, ["neatlogs.llm.token_count.completion", "gen_ai.usage.output_tokens", "gen_ai.usage.completion_tokens", "llm.token_count.completion", "ai.usage.completionTokens", "ai.usage.outputTokens"]));
   const readRaw = first(a, ["neatlogs.llm.token_count.cache_read", "gen_ai.usage.cache_read.input_tokens"]);
   const writeRaw = first(a, ["neatlogs.llm.token_count.cache_write", "gen_ai.usage.cache_creation.input_tokens"]);
   const read = readRaw === undefined ? 0 : count(readRaw), write = writeRaw === undefined ? 0 : count(writeRaw);
   if (input === undefined || output === undefined || read === undefined || write === undefined) return result;
-  const uncached = rate.inputMode === "includes-cache" ? input - read - write : input;
+  // GenAI input counts include cache tokens regardless of the provider's native API.
+  // Preserve the configured convention for other sources, including Neatlogs attributes.
+  const includesCache = inputKey?.startsWith("gen_ai.usage.") || rate.inputMode === "includes-cache";
+  const uncached = includesCache ? input - read - write : input;
   if (uncached < 0) return result;
   const custom = overrides.some((r) => r.provider.toLowerCase() === rate.provider.toLowerCase() && r.model.toLowerCase() === rate.model.toLowerCase());
   const legacySonnet = rate.provider === "anthropic" && ["claude-sonnet-4-5", "claude-sonnet-4-5-20250929"].includes(rate.model);
-  if (!custom && legacySonnet && input + read + write > 200_000) return result;
+  if (!custom && legacySonnet && uncached + read + write > 200_000) return result;
   const ttl = a["neatlogs.llm.cache_ttl"];
   if (write && ttl !== undefined && ttl !== "5m" && ttl !== "1h") return result;
   const writeRate = ttl === "1h" ? rate.cacheWrite1h : rate.cacheWrite;
