@@ -431,6 +431,7 @@ export class Store {
     return !fs.existsSync(current) && fs.existsSync(legacy) ? legacy : current;
   }
 
+  /** Open local storage and install the schema and incremental projection helpers. */
   constructor(dir: string) {
     this.dir = dir;
     fs.mkdirSync(dir, { recursive: true });
@@ -528,7 +529,10 @@ export class Store {
           const row = this.writeSpan(span, view, resourceId, scopeId, now, !previous);
           u.spans.push({ row, view, isNew: !previous });
           const runFlags = this.updateRun(span, view, row, resAttrs, now, previous);
-          if (runFlags.created) u.runCreated = true;
+          if (runFlags.created) {
+            u.runCreated = true;
+            this.streamFlags.newTrace(span.traceId);
+          }
           if (runFlags.rootEnded) u.rootEnded = true;
           if (runFlags.rootHandedBack) u.rootHandedBack = true;
           if (runFlags.completed) u.completed = true;
