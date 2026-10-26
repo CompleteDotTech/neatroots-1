@@ -193,6 +193,7 @@ export const TOOLS = [
     description: "The run in focus in the neatroots app (or the latest run), with its outline, findings and the selected span.",
     input: { max_spans: z.number().int().min(1).max(500).optional().describe("Most spans to include in the outline (default 80)") },
     readOnly: true,
+    /** Read the current outline and selected span after legacy flags are available. */
     run: async (roots, a) => {
       const r = resolveTraceNoting(roots, undefined);
       const traceId = r.traceId;
@@ -253,6 +254,7 @@ export const TOOLS = [
       max_spans: z.number().int().min(1).max(1000).optional(),
     },
     readOnly: true,
+    /** Return the requested run's bounded outline with any focus fallback noted. */
     run: async (roots, a) => {
       const r = resolveTraceNoting(roots, a.trace_id);
       return { ...await outline(roots, r.traceId, a.max_spans ?? 150), ...fallbackNote(r) };

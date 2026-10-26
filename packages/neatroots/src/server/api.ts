@@ -117,6 +117,7 @@ function projects(roots: Roots) {
 }
 
 
+/** Register the local application routes, including asynchronous run-detail reads. */
 export function mountApi(app: Hono, roots: Roots): void {
   const engine = roots.engine;
   mountModelsApi(app, roots);
