@@ -63,6 +63,7 @@ function traceCache(store: Store, traceId: string): Map<string, SpanInfo> {
   return spans;
 }
 
+/** Load stored spans into a cached trace snapshot with derived checking semantics. */
 export function loadTrace(store: Store, traceId: string): TraceSnapshot {
   const rows = store.getSpans(traceId, false);
   const cache = traceCache(store, traceId);
