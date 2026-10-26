@@ -1,4 +1,5 @@
 import type { Roots } from "../core.js";
+import { generatedPlannerId, parsePlannerOutput, type PlannerOutput } from "./planner.js";
 import type { TraceUpdate } from "../store/db.js";
 import type { LlmClient } from "../models/llm.js";
 import { LlmUnavailableError } from "../models/llm.js";
@@ -998,7 +999,7 @@ ${wrapRun(`System prompt: ${clip(goal.system ?? "(none)", 2500)}\nFirst user mes
 
 Library questions:
 ${library}`;
-    let out: { rationale?: string; checks?: { id: string; params?: Record<string, string> }[]; new_questions?: { id: string; ask: string; scope?: string; span_type?: string; guidance?: string }[] } | undefined;
+    let out: PlannerOutput | undefined;
     let model: string | null = null;
     try {
       const r = await this.llm.chat(
@@ -1008,9 +1009,7 @@ ${library}`;
         ],
         { schema: { name: "plan", schema: PLANNER_SCHEMA }, maxTokens: 900, priority: "high", timeoutSec: 90 },
       );
-      const candidate = r.json as typeof out;
-      if (!candidate || !Array.isArray(candidate.checks) || !Array.isArray(candidate.new_questions)) throw new Error("planner returned an invalid plan");
-      out = candidate;
+      out = parsePlannerOutput(r.json);
       model = r.model;
     } catch (err) {
       log.warn(`planner failed, using default checks: ${(err as Error).message}`);
@@ -1020,9 +1019,8 @@ ${library}`;
     const params: Record<string, Record<string, string>> = {};
     for (const c of valid) if (c.params && Object.keys(c.params).length) params[c.id] = c.params;
     for (const q of (out?.new_questions ?? []).slice(0, 3)) {
-      const base = q.id && !/^(new|question|q|check)[-_ ]?\d*$|new[-_]?question/i.test(q.id) ? q.id : q.ask;
-      const id = `${slug(run.workflow)}.${slug(base)}`.slice(0, 64);
-      if (!q.ask || q.ask.length < 12) continue;
+      const id = generatedPlannerId(run.workflow, q);
+      if (!id || ids.includes(id)) continue;
       const types = q.span_type === "llm" ? ["llm"] : q.span_type === "tool" ? ["tool", "mcp_tool"] : ["llm", "tool", "mcp_tool"];
       const check: QuestionCheck = {
         id,
@@ -1345,14 +1343,6 @@ export async function resumeUnfinished(engine: Engine, roots: Roots): Promise<nu
   if (todo.length) log.info(`finishing checks for ${todo.length} run${todo.length === 1 ? "" : "s"} a restart interrupted`);
   for (const id of todo) await engine.recheck(id, { resume: true });
   return todo.length;
-}
-
-function slug(s: string): string {
-  return s
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, "-")
-    .replace(/^-+|-+$/g, "")
-    .slice(0, 40) || "check";
 }
 
 /** A cheap first pass at labeling a tool result; undefined means "ask the classifier". */

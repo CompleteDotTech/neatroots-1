@@ -196,7 +196,7 @@ export async function mockLlm(
         content = JSON.stringify({ quote: rejected ? "" : ev.slice(0, 40), shows_problem: !rejected });
       } else if (schema === "plan") {
         const checks = opts.plan ?? [{ id: "ignored-tool-error" }, { id: "unfinished-task" }, { id: "repeat-without-progress" }];
-        content = JSON.stringify(opts.plannerJson ?? { rationale: "mock plan", checks, new_questions: [] });
+        content = JSON.stringify(Object.hasOwn(opts, "plannerJson") ? opts.plannerJson : { rationale: "mock plan", checks, new_questions: [] });
       } else if (schema === "note") {
         content = JSON.stringify({ note: "Stop retrying lookup_order with the same id and tell the user the order was not found." });
       } else if (schema === "summary") {
