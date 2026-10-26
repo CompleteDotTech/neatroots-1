@@ -285,6 +285,7 @@ function exceptionMessage(span: OtlpSpan): string | undefined {
   return undefined;
 }
 
+/** Derive display and checking semantics without rewriting the recorded span. */
 export function buildView(span: OtlpSpan, resourceAttrs: KeyValue[]): SpanView {
   const attrs = kvToPlain(span.attributes);
   const res = kvToPlain(resourceAttrs);

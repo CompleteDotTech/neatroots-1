@@ -8,6 +8,7 @@ export function spanState(span: Pick<Span, "status_code" | "error" | "span_kind"
   return undefined;
 }
 
+/** Display a failure or abandonment label without changing recorded status. */
 export function SpanStatus({ span }: { span: Parameters<typeof spanState>[0] }) {
   const state = spanState(span);
   return state ? <StatusPill className="shrink-0" size="sm" tone={state === "Failed" ? "danger" : "warning"}>{state}</StatusPill> : null;

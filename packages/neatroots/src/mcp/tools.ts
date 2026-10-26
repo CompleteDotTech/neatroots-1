@@ -120,8 +120,9 @@ export function jsonPath(value: unknown, path: string): unknown {
   return tokens.includes("*") ? cur : cur[0];
 }
 
-function outline(roots: Roots, traceId: string, maxSpans: number) {
-  const d = runDetail(roots, traceId)!;
+/** Render the stored span tree after asynchronous legacy projection reads. */
+async function outline(roots: Roots, traceId: string, maxSpans: number) {
+  const d = (await runDetail(roots, traceId))!;
   const findingsBySpan = new Map<string, string[]>();
   for (const f of d.findings) {
     if (f.status === "dismissed" || f.status === "quiet") continue;
@@ -195,7 +196,7 @@ export const TOOLS = [
     run: async (roots, a) => {
       const r = resolveTraceNoting(roots, undefined);
       const traceId = r.traceId;
-      const o = outline(roots, traceId, a.max_spans ?? 80);
+      const o = await outline(roots, traceId, a.max_spans ?? 80);
       const span = roots.focus?.trace_id === traceId && roots.focus.span_id ? spanDetail(roots, traceId, roots.focus.span_id) : null;
       return { ...o, selected_span: span ? { span_id: span.span_id, name: span.name, kind: span.kind, input: span.view.input, output: span.view.output, error: span.view.error ?? null } : null, ...fallbackNote(r) };
     },
@@ -254,7 +255,7 @@ export const TOOLS = [
     readOnly: true,
     run: async (roots, a) => {
       const r = resolveTraceNoting(roots, a.trace_id);
-      return { ...outline(roots, r.traceId, a.max_spans ?? 150), ...fallbackNote(r) };
+      return { ...await outline(roots, r.traceId, a.max_spans ?? 150), ...fallbackNote(r) };
     },
   }),
   def({

@@ -116,6 +116,7 @@ function asList(v: string | string[] | undefined): string[] | undefined {
   return (Array.isArray(v) ? v : [v]).map((x) => x.toLowerCase());
 }
 
+/** Match recorded span semantics against the optional selector fields. */
 export function matchesSelector(s: SpanInfo, sel: SpanSelector | undefined): boolean {
   if (!sel) return true;
   if (sel.stream_cancelled !== undefined && s.streamCancelled !== sel.stream_cancelled) return false;

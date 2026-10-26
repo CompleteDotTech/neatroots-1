@@ -30,6 +30,7 @@ export { checkFromInput } from "./api-checks.js";
 
 const STEERING_MODES: SteeringMode[] = ["off", "advisory", "gate", "self-check"];
 
+/** Summarize stored run metrics and current finding/steering state. */
 export function runSummary(roots: Roots, r: RunRow) {
   const summary = roots.store.getSummary(r.trace_id);
   return {
@@ -41,11 +42,12 @@ export function runSummary(roots: Roots, r: RunRow) {
   };
 }
 
-export function runDetail(roots: Roots, traceId: string) {
+/** Read run details after any legacy cancellation projection has been backfilled. */
+export async function runDetail(roots: Roots, traceId: string) {
+  const cancelled = await roots.store.cancelledSpanIds(traceId);
   const run = roots.store.getRun(traceId);
   if (!run) return undefined;
   const spans = roots.store.getSpans(traceId, false);
-  const cancelled = roots.store.spansWithBooleanAttribute(traceId, "neatlogs.stream.cancelled");
   const decisions = roots.store.decisionsForTrace(traceId);
   const toolLabels: Record<string, string> = {};
   for (const d of decisions) {
@@ -180,7 +182,7 @@ export function mountApi(app: Hono, roots: Roots): void {
   });
 
   app.get("/api/runs/:traceId", async (c) => {
-    const d = runDetail(roots, c.req.param("traceId"));
+    const d = await runDetail(roots, c.req.param("traceId"));
     return d ? c.json({ ...d, coverage: await checkCoverage(roots, c.req.param("traceId")) }) : err(c, 404, "run not found");
   });
 

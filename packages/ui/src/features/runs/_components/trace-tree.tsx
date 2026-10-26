@@ -23,6 +23,7 @@ export const KIND_ICON: Record<string, IconSvgElement> = {
 
 export const isGuidance = (s: Span) => s.name === "neatroots.guidance" || s.name === "roots.guidance";
 
+/** Order every recorded span once, including spans with cyclic or missing parents. */
 export function treeOrder(spans: Span[]): { span: Span; depth: number }[] {
   const ids = new Set(spans.map((s) => s.span_id));
   const children = new Map<string | null, Span[]>();

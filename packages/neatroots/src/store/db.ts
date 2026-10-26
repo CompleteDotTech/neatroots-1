@@ -5,6 +5,7 @@ import { BlobStore } from "./blobs.js";
 import { compactSearchIndex, oldestRunsCovering, reclaimPayloads, runSteps, runStepsAsync, type Steps } from "./retention.js";
 import { deleteUnattachedLogsBefore, trimUnattachedLogs } from "./unattached-logs.js";
 import { SearchIds } from "./search-ids.js";
+import { StreamFlags } from "./stream-flags.js";
 import { sha256, newId } from "../util/ids.js";
 import { buildView, preview, type SpanView } from "../semantics/view.js";
 import { hasRemoteParent, kvToPlain, type KeyValue, type OtlpResource, type OtlpScope, type OtlpSpan, type Plain, type ResourceSpansBatch } from "../otlp/types.js";
@@ -418,6 +419,7 @@ export class Store {
   readonly db: Database.Database;
   readonly blobs: BlobStore;
   private readonly searchIds: SearchIds;
+  private readonly streamFlags: StreamFlags;
   private seq = 0;
   readonly dir: string;
   readonly file: string;
@@ -439,6 +441,7 @@ export class Store {
     this.db.pragma("busy_timeout = 5000");
     this.db.exec(SCHEMA);
     this.migrate();
+    this.streamFlags = new StreamFlags(this.db);
     this.searchIds = new SearchIds(this.db);
     this.blobs = new BlobStore(path.join(dir, "blobs"));
     const row = this.db.prepare("SELECT MAX(seq) AS s FROM spans").get() as { s: number | null };
@@ -538,6 +541,7 @@ export class Store {
     return [...updates.values()];
   }
 
+  /** Store lossless payloads alongside compact fields used by queries and run views. */
   private writeSpan(span: OtlpSpan, view: SpanView, resourceId: string, scopeId: string, now: number, isNew: boolean): SpanRow {
     const used = new Set<string>();
     const attributes = this.blobs.offload(span.attributes, used);
@@ -587,14 +591,15 @@ export class Store {
         `INSERT OR REPLACE INTO spans (trace_id, span_id, parent_span_id, name, span_kind, otel_kind, start_ns, end_ns,
           start_ms, end_ms, duration_ms, status_code, status_message, model, provider, tool_name, prompt_tokens,
           completion_tokens, total_tokens, input_preview, output_preview, error, attributes, events, links, extra, blobs,
-          is_marker, resource_id, scope_id, received_ms, seq)
+          is_marker, resource_id, scope_id, received_ms, seq, stream_cancelled)
          VALUES (@trace_id, @span_id, @parent_span_id, @name, @span_kind, @otel_kind, @start_ns, @end_ns, @start_ms,
           @end_ms, @duration_ms, @status_code, @status_message, @model, @provider, @tool_name, @prompt_tokens,
           @completion_tokens, @total_tokens, @input_preview, @output_preview, @error, @attributes, @events, @links,
-          @extra, @blobs, @is_marker, @resource_id, @scope_id, @received_ms, @seq)`,
+          @extra, @blobs, @is_marker, @resource_id, @scope_id, @received_ms, @seq, @stream_cancelled)`,
       )
       .run({
         ...row,
+        stream_cancelled: Number(view.streamCancelled === true),
         attributes: JSON.stringify(attributes),
         events: JSON.stringify(events),
         links: JSON.stringify(span.links),
@@ -917,17 +922,9 @@ export class Store {
       .all(traceId) as SpanRow[];
   }
 
-  /** Read an explicit boolean attribute without loading span bodies or offloaded blobs.
-   * Match kvToPlain: the last occurrence of a duplicate attribute wins. */
-  spansWithBooleanAttribute(traceId: string, key: string): Set<string> {
-    const rows = this.db.prepare(`
-      SELECT span_id FROM spans AS s WHERE trace_id = ? AND (
-        SELECT json_type(a.value, '$.value.boolValue') = 'true'
-        FROM json_each(s.attributes) AS a WHERE json_extract(a.value, '$.key') = ?
-        ORDER BY CAST(a.key AS INTEGER) DESC LIMIT 1
-      ) = 1
-    `).all(traceId, key) as { span_id: string }[];
-    return new Set(rows.map((row) => row.span_id));
+  /** Read compact cancellation flags, yielding while old rows are backfilled. */
+  cancelledSpanIds(traceId: string): Promise<Set<string>> {
+    return this.streamFlags.cancelled(traceId);
   }
 
   getSpanRow(traceId: string, spanId: string): SpanRow | undefined {

@@ -18,12 +18,12 @@ it("projects only strict, last-value booleans without hydrating full spans or bl
     tb.roots.store.ingest([batch(spans)]);
     const before = tb.roots.store.getRun(traceId);
     const full = vi.spyOn(tb.roots.store, "getOtlpSpan").mockImplementation(() => { throw new Error("full-span hydration is forbidden"); });
-    expect(tb.roots.store.spansWithBooleanAttribute(traceId, key)).toEqual(new Set([spans[0].spanId, spans[6].spanId]));
+    expect(await tb.roots.store.cancelledSpanIds(traceId)).toEqual(new Set([spans[0].spanId, spans[6].spanId]));
     expect(full).not.toHaveBeenCalled();
     full.mockRestore();
     // importSource already reads the root once; cancellation must add no reads.
     const detailReads = vi.spyOn(tb.roots.store, "getOtlpSpan");
-    const detail = runDetail(tb.roots, traceId)!;
+    const detail = (await runDetail(tb.roots, traceId))!;
     expect(detail.spans.map((s) => s.stream_cancelled)).toEqual([true, false, false, false, false, false, true, false]);
     expect(detailReads).toHaveBeenCalledTimes(1);
     expect(detailReads).toHaveBeenCalledWith(traceId, before!.root_span_id);
