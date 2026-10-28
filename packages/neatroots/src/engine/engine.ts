@@ -36,7 +36,7 @@ import type { Plain } from "../otlp/types.js";
 import { preview } from "../semantics/view.js";
 import { log } from "../util/log.js";
 import { CheckProgress } from "./progress.js";
-import { addOccurrence, dropOccurrence, findingSpans, isOpenFinding, newFindingStatus } from "./findings.js";
+import { addOccurrence, clearFailure, dropOccurrence, findingSpans, isOpenFinding, newFindingStatus, recordFailure } from "./findings.js";
 import { verifyFlag } from "./verify.js";
 
 /** Default library questions when no LLM is available to plan. */
@@ -572,23 +572,8 @@ export class Engine {
       }
       if (dismissed()) return;
       // A model error or timeout is a failed check, never a "no".
-      const existing = this.roots.store.latestFindingFor(run.traceId, check.id);
-      if (!existing || existing.status !== "failed") {
-        const f = this.roots.store.insertFinding({
-          trace_id: run.traceId,
-          check_id: check.id,
-          check_kind: "question",
-          title: checkTitle(check),
-          probability: null,
-          status: "failed",
-          evidence_span_ids: spanIds,
-          detail: { error: (err as Error).message, span_id: spanId },
-          model: null,
-          triage_score: null,
-          explanation_id: null,
-        });
-        this.roots.bus.emit("finding", f);
-      }
+      const f = recordFailure(this.roots.store, { traceId: run.traceId, checkId: check.id, title: checkTitle(check), spanId, spanIds, message: (err as Error).message });
+      if (f) this.roots.bus.emit("finding", f);
       return;
     }
     if (dismissed()) return;
@@ -603,6 +588,9 @@ export class Engine {
       backend: result.backend,
       latency_ms: result.latencyMs,
     });
+    // It ran this time, so an earlier "could not run" for this span (or the whole run) is stale:
+    // the panel would keep saying the check failed, and a flag now would sit next to it.
+    for (const f of clearFailure(this.roots.store, run.traceId, check.id, spanId)) this.roots.bus.emit("finding", f);
     const open = this.findOpen(run.traceId, check.id, spanId);
     if (verdict.flagged) {
       if (open) {
