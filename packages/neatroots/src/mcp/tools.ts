@@ -122,7 +122,8 @@ export function jsonPath(value: unknown, path: string): unknown {
 
 /** Render the stored span tree after asynchronous legacy projection reads. */
 async function outline(roots: Roots, traceId: string, maxSpans: number) {
-  const d = (await runDetail(roots, traceId))!;
+  const d = await runDetail(roots, traceId);
+  if (!d) return undefined;
   const findingsBySpan = new Map<string, string[]>();
   for (const f of d.findings) {
     if (f.status === "dismissed" || f.status === "quiet") continue;
@@ -186,6 +187,18 @@ async function outline(roots: Roots, traceId: string, maxSpans: number) {
   };
 }
 
+/** Resolve an outline again once if its run disappears during an asynchronous read. */
+async function resolvedOutline(roots: Roots, id: string | undefined, maxSpans: number) {
+  let resolution = resolveTraceNoting(roots, id);
+  let detail = await outline(roots, resolution.traceId, maxSpans);
+  if (!detail) {
+    resolution = resolveTraceNoting(roots, id);
+    detail = await outline(roots, resolution.traceId, maxSpans);
+  }
+  if (!detail) throw new Error("run disappeared while reading outline");
+  return { resolution, detail };
+}
+
 export const TOOLS = [
   def({
     name: "get_current_run",
@@ -195,9 +208,8 @@ export const TOOLS = [
     readOnly: true,
     /** Read the current outline and selected span after legacy flags are available. */
     run: async (roots, a) => {
-      const r = resolveTraceNoting(roots, undefined);
+      const { resolution: r, detail: o } = await resolvedOutline(roots, undefined, a.max_spans ?? 80);
       const traceId = r.traceId;
-      const o = await outline(roots, traceId, a.max_spans ?? 80);
       const span = roots.focus?.trace_id === traceId && roots.focus.span_id ? spanDetail(roots, traceId, roots.focus.span_id) : null;
       return { ...o, selected_span: span ? { span_id: span.span_id, name: span.name, kind: span.kind, input: span.view.input, output: span.view.output, error: span.view.error ?? null } : null, ...fallbackNote(r) };
     },
@@ -256,8 +268,8 @@ export const TOOLS = [
     readOnly: true,
     /** Return the requested run's bounded outline with any focus fallback noted. */
     run: async (roots, a) => {
-      const r = resolveTraceNoting(roots, a.trace_id);
-      return { ...await outline(roots, r.traceId, a.max_spans ?? 150), ...fallbackNote(r) };
+      const { resolution: r, detail: o } = await resolvedOutline(roots, a.trace_id, a.max_spans ?? 150);
+      return { ...o, ...fallbackNote(r) };
     },
   }),
   def({
